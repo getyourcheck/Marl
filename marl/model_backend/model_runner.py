@@ -10,7 +10,7 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-from .policy_output import PolicyOutput
+from ..policy_output import PolicyOutput
 
 DEFAULT_MAX_NEW_TOKENS=64
 
@@ -61,14 +61,14 @@ class HfModelRunner():
         # pretrained_loss = actor_model(pretrained_inputs_ids, pretrained_labels)
         # loss = reward_loss + 0.1 * pretrained_loss
 
-        labels = input_ids.clone() if labels is None else labels
+        input_ids = input_ids.to(self.device)
+        labels = input_ids.clone() if labels is None else labels.to(self.device)
         batch = {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
         self.model.train()
         loss = self.model(**batch, use_cache=False).loss
-        self.accelerator.backward(loss)  # i.e., loss.backward()
+        loss.backward()  # TODO: self.accelerator.backward(loss)
         self.optimizer.step()
-        success = True
-        return success, loss
+        return loss
 
     def infer(
         self,

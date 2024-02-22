@@ -10,7 +10,7 @@ inputs = tokenizer(input_text_list, return_tensors="pt", padding=True).to("cuda"
 #   'input_ids': tensor([[ 2, 250, 889, 9, 8089, 35, 1275, 6, 2440], [ 2, 22117, 39029, 16, 1, 1, 1, 1, 1]], device='cuda:0') }
 
 # %%
-from marl.model_backend import HfModelRunner
+from marl.model_backend.model_runner import HfModelRunner
 mr = HfModelRunner(model_config=model_config)
 
 infer_config = {"max_new_tokens": 64}
@@ -22,7 +22,7 @@ print(output_gen)
 
 # %%
 import ray
-from marl.model_backend import HfModelRunnerRayActor
+from marl.model_backend.model_runner import HfModelRunnerRayActor
 
 ray.init()
 mra = HfModelRunnerRayActor.remote(model_config)

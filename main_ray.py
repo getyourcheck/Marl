@@ -51,4 +51,4 @@ for i, outstr in enumerate(output_gen.output_str):
 
 # %% 4. train
 print()
-print("[INFO] [WIP] actor_model.train():", actor_model.train())
+print("[INFO] [WIP] actor_model.train() outputs loss:", actor_model.train(inputs.input_ids, inputs.input_ids))

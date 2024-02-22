@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*$py.class
+*.pth
+*.py~
+*.sh~
+.ipynb_checkpoints
+.python-version
+core.*
+
+# Developing Env
+.vscode
+.idea
+.DS_Store
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.mypy_cache/
+
+# Custom
+logs/
+drafts/
+wandb/
+temp*/

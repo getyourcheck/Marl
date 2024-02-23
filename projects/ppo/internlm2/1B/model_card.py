@@ -1,0 +1,25 @@
+import torch
+
+model = dict(
+    checkpoint=0,
+    num_chunks=1,
+    num_attention_heads=16,
+    embed_split_hidden=True,
+    vocab_size=92544,
+    embed_grad_scale=1,
+    parallel_output=True,
+    hidden_size=2048,
+    num_layers=24,
+    mlp_ratio=4,
+    num_kv_attention_heads=8,
+    apply_post_layer_norm=False,
+    dtype=torch.bfloat16,
+    norm_type="rmsnorm",
+    layer_norm_epsilon=1e-05,
+    no_bias=True,
+    adapt_hf=True,
+    norm_head=True,
+    multiple_of=128,
+    rope_base=1_000_000,
+    use_flash_attn=True,
+)

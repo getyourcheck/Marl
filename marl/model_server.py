@@ -3,45 +3,54 @@ from transformers import AutoTokenizer
 from typing import Optional
 
 from .model_backend import (
-    HfModelRunnerRayActor
+    HfModelTrainerRayActor
 )
 
 class ModelServer():
     # Initialize
-    def __init__(self, model_config: dict):
+    def __init__(self, model_name: str, model_config: dict):
+        self.model_name = model_name
         self.model_config = model_config
-        self.model_name = model_config.get("model_name")
         self.trainer = None
         self.generator = None
+        self.tokenizer = None
         self.model_ref = None
         self.is_initialized = False
-        print(f"[{self.__class__.__name__}] model_config={model_config}")
+        print(f"[{self.__class__.__name__}] model_name={model_name}, model_config={model_config}")
 
     def initialize(self):
-        model_path = self.model_config.get("model_path")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)  # TODO: os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        model_path: str = self.model_config["model_path"]  # requisite
+        trainer_config: dict = self.model_config["trainer_config"]  # requisite
+        generator_config: dict = self.model_config.get("generator_config")  # optional
 
-        default_runner_config: dict = {"model_path": model_path}
-        generator_config: dict = self.model_config.get("generator_config", default_runner_config)
-        generator_type = generator_config.get("generator_type", "huggingface")
-        if generator_type == "huggingface":
-            self.generator = HfModelRunnerRayActor.remote(generator_config)
-        elif generator_type == "vllm":
-            raise NotImplementedError
-        else:
-            raise ValueError(f"No generator is registered with type '{generator_type}'.")
-
-        trainer_config: dict = self.model_config.get("trainer_config", default_runner_config)
-        trainer_type = self.model_config.get("model_trainer", "huggingface")
-        if trainer_type == generator_type:  # reuse the same runner
-            self.trainer = self.generator
-        elif trainer_type == "huggingface":
-            self.trainer = HfModelRunnerRayActor.remote(trainer_config)
-        elif trainer_type == "internevo":
-            raise NotImplementedError
+        trainer_config['model_path'] = model_path
+        trainer_type: str = trainer_config.get("trainer_type", "huggingface")
+        if trainer_type.lower() == "huggingface":
+            self.trainer = HfModelTrainerRayActor.remote(trainer_config)
+        elif trainer_type.lower() == "internevo":
+            raise NotImplementedError(f"{generator_type.lower()}.")
         else:
             raise ValueError(f"No trainer is registered with type '{trainer_type}'.")
         self.model_ref = self.trainer.get_model.remote() # an reference
+
+        # Tokenizer is initialized in ModelServer (not ModelTrainer) to avoid remote call
+        # FIXME: os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+
+        if generator_config is not None:  # optional
+            generator_config['model_path'] = model_path
+            shared_with_trainer = generator_config.get("shared_with_trainer", True)
+            if shared_with_trainer:
+                self.generator = self.trainer
+            else:
+                generator_config.update("")
+                generator_type: str = generator_config.get("generator_type", "huggingface")
+                if generator_type.lower() == "huggingface":
+                    self.generator = HfModelTrainerRayActor.remote(generator_config)
+                elif generator_type.lower() == "vllm":
+                    raise NotImplementedError(f"{generator_type.lower()}.")
+                else:
+                    raise ValueError(f"No generator is registered with type '{generator_type}'.")
 
         self.is_initialized = True
         print(f"[{self.__class__.__name__}] {self.model_name} has been initialized.  self.generator_eq_trainer: {self.generator_eq_trainer}")
@@ -54,26 +63,31 @@ class ModelServer():
         return ray.get(self.model_ref, timeout=600.0) # 10min timeout
 
     # Training
-    def train(self, input_ids, labels=None, attention_mask=None, **train_kwargs):
-        object_refs = self.train_async(input_ids, labels, attention_mask, **train_kwargs)
-        return self.train_get(object_refs)
-
+    # TODO: change train() to 2-step training: compute_loss(), optimizer_step()
     def train_async(self, input_ids, labels=None, attention_mask=None, **train_kwargs):
         return self.trainer.train.remote(input_ids, labels, attention_mask, **train_kwargs)
 
     def train_get(self, object_refs, timeout: Optional[float] = None):
         return ray.get(object_refs, timeout=timeout)
 
-    # Inference
-    def infer(self, input_ids, **infer_kwargs):
-        object_refs = self.infer_async(input_ids, **infer_kwargs)
-        return self.infer_get(object_refs)
+    def train(self, input_ids, labels=None, attention_mask=None, **train_kwargs):
+        object_refs = self.train_async(input_ids, labels, attention_mask, **train_kwargs)
+        return self.train_get(object_refs)
 
+    # Inference
+    # TODO: decouple infer() to infer() and generate()
     def infer_async(self, input_ids, **infer_kwargs):
         return self.generator.infer.remote(input_ids, infer_kwargs)
 
     def infer_get(self, object_refs, timeout: Optional[float] = None):
         return ray.get(object_refs, timeout=timeout)
+
+    def infer(self, input_ids, **infer_kwargs):
+        object_refs = self.infer_async(input_ids, **infer_kwargs)
+        return self.infer_get(object_refs)
+
+    # Generate (calls generator)
+
 
     # Others
     def _load_chat_template(self, chat_template):

@@ -1,0 +1,10 @@
+[
+    {
+        "prob": 0.8,
+        "filepath": "./data/pre_sft_data/sft_data_0.jsonl"
+    },
+    {
+        "prob": 0.2,
+        "filepath": "./data/pre_sft_data/sft_data_1.jsonl"
+    }
+]

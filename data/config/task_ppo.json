@@ -1,0 +1,10 @@
+[
+    {
+        "prob": 0.9,
+        "filepath": "./data/ppo_data/ppo_data_0.jsonl"
+    },
+    {
+        "prob": 0.3,
+        "filepath": "./data/ppo_data/ppo_data_1.jsonl"
+    }
+]

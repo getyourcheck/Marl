@@ -8,6 +8,7 @@ from marl.config import Config
 
 # %% 1. load a pretrained model
 cluster_address = "auto" # "ray://127.0.0.1:10001" # FIXME
+print(f"cluster_address={cluster_address}")
 model_configs_path = "projects/ppo/internlm2/1B/actor_reward_2gpu.py"
 model_configs = Config.from_file(model_configs_path)
 coordinator = Coordinator(cluster_address, model_configs)

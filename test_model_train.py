@@ -4,6 +4,13 @@ trainer_config = Config(
     dict(
         model_path = "facebook/opt-1.3b",
         trainer_type = "huggingface",
+        train_kwargs = dict(
+            micro_bsz = 1,
+            lr = 1e-6,
+            total_steps = 1e9,
+            lr_decay_rate = 1,
+            loss_type = "per_token",
+        ),
         parallel = dict(
             data = dict(size = 1),
             tensor = dict(size = 1, mode = "1d"),
@@ -24,12 +31,11 @@ inputs = tokenizer(input_text_list, return_tensors="pt", padding=True).to("cuda"
 from marl.model_backend.hf_model_trainer import HfModelTrainer
 mr = HfModelTrainer(model_config=trainer_config)
 
-infer_config = {"max_new_tokens": 64}
-output_inf = mr.infer(inputs.input_ids, step=1, **infer_config)
-print(output_inf)
+loss = mr.compute_loss(inputs.input_ids, inputs.input_ids)
+print(loss)
 
-output_gen = mr.infer(inputs.input_ids, **infer_config)
-print(output_gen)
+loss2 = mr.compute_loss(inputs.input_ids, inputs.input_ids)
+print(loss2)
 
 # %%
 import ray

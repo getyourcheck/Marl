@@ -18,9 +18,10 @@ actor = dict(
         ),
 
         parallel = dict(
-            zero1 = dict(size = 1),
+            data = dict(size = 1, mode = "ddp"),
             tensor = dict(size = 1, mode = "1d"),
             pipeline = dict(size = 1, interleaved_overlap = False),
+            sequence = False,
         ),
     ),
 
@@ -57,9 +58,10 @@ reward = dict(
         trainer_type = "huggingface",
 
         parallel = dict(
-            zero1 = dict(size = 1),
+            data = dict(size = 1, mode = "ddp"),
             tensor = dict(size = 1, mode = "1d"),
             pipeline = dict(size = 1, interleaved_overlap = False),
+            sequence = False,
         ),
     ),
 )

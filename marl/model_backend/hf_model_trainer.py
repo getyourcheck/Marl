@@ -1,12 +1,16 @@
 import ray
 import torch
 
+from torch.nn.modules.loss import _Loss
+from torch.optim.lr_scheduler import _LRScheduler
+
 from typing import Optional, Union
 from accelerate import Accelerator
 
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
+    PreTrainedModel,
     get_scheduler as transformers_get_scheduler,
 )
 
@@ -26,7 +30,7 @@ class HfModelTrainer():
     def __init__(self, model_config):
         # 1. Model
         model_path = model_config.get("model_path")
-        self.model = AutoModelForCausalLM.from_pretrained(
+        self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path=model_path,
             device_map="auto",
             trust_remote_code=True,
@@ -43,7 +47,7 @@ class HfModelTrainer():
 
         # 3. Trainer
         parallel: dict = model_config["parallel"]
-        assert parallel['zero1']['size'] == 1
+        assert parallel['data']['size'] == 1
         assert parallel['tensor']['size'] == 1
         assert parallel['pipeline']['size'] == 1
         # self.trainer = Accelerator()  # TODO: multi-GPU training
@@ -55,7 +59,7 @@ class HfModelTrainer():
 
         optimizer_type = train_kwargs.get("optimizer", torch.optim.AdamW)
         learning_rate = train_kwargs.get("lr", 1e-5)
-        self.optimizer = optimizer_type(
+        self.optimizer: torch.optim.Optimizer = optimizer_type(
             params=self.model.parameters(),
             lr=learning_rate,
         )
@@ -71,27 +75,65 @@ class HfModelTrainer():
         print(f"[{self.__class__.__name__}] __init__() done with train_kwargs.")
 
     # TODO: change train() to 2-step training: compute_loss(), optimizer_step()
+    def compute_loss(
+        self,
+        input_ids: Union[list[torch.Tensor], torch.Tensor],
+        labels: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
+        attention_mask: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
+        criterion: Optional[Union[list[_Loss], _Loss]] = None,
+        **_ignored,
+    ):
+        """
+        criterion: _Loss class, e.g., torch.nn.CrossEntropyLoss()
+        """
+        # https://stackoverflow.com/questions/53994625/how-can-i-process-multi-loss-in-pytorch
+        print(f"[{self.__class__.__name__}] self.compute_loss()")
+        if type(criterion) == list:  # multiple inputs grouped to compute loss
+            assert len(input_ids) == len(labels) == len(criterion) == len(attention_mask)
+            losses = [0.0 for _ in range(len(criterion))]
+            for i in range(len(input_ids)):
+                loss = self.compute_loss_one(input_ids[i], labels[i], attention_mask[i], criterion[i])
+                losses[i] = loss
+            loss = sum(losses)
+            return loss
+        else:
+            return self.compute_loss_one(input_ids, labels, attention_mask, criterion)
+
+    def compute_loss_one(
+        self,
+        input_ids:torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        criterion: Optional[_Loss] = None,
+    ) -> torch.Tensor:
+        input_ids = input_ids.to(self.device)
+        labels = input_ids.clone() if labels is None else labels.to(self.device)
+        batch = {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
+        self.model.train()
+
+        if criterion is None:
+            loss = self.model(**batch, use_cache=False).loss
+        else:
+            logits = self.model(**batch, use_cache=False).logits
+            loss_fn = criterion()
+            loss = loss_fn(logits, labels)
+        return loss
+
     def train(
         self,
         input_ids: Union[list[torch.Tensor], torch.Tensor],
         labels: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        loss_fn = None,
+        criterion = None,
         **_ignored,
     ):
         print(f"[{self.__class__.__name__}] self.train()")
-        # TODO: input_ids as a list of torch.Tensor
-        # reward_loss = actor_model(inputs_ids, reward_model_labels)
-        # pretrained_loss = actor_model(pretrained_inputs_ids, pretrained_labels)
-        # loss = reward_loss + 0.1 * pretrained_loss
-
-        input_ids = input_ids.to(self.device)
-        labels = input_ids.clone() if labels is None else labels.to(self.device)
-        batch = {'input_ids': input_ids, 'attention_mask': attention_mask, 'labels': labels}
-        self.model.train()
-        loss = self.model(**batch, use_cache=False).loss
+        criterion = torch.nn.CrossEntropyLoss
+        loss = self.compute_loss(input_ids, labels, attention_mask, criterion)
         loss.backward()  # TODO: self.accelerator.backward(loss)
         self.optimizer.step()
+        self.lr_scheduler.step()
+        self.optimizer.zero_grad()
         return loss
 
     # TODO: decouple infer() to infer() and generate()
@@ -149,3 +191,8 @@ class HfModelTrainer():
 @ray.remote(num_cpus=0.1, num_gpus=0.1)
 class HfModelTrainerRayActor(HfModelTrainer):
     pass
+
+# class HfModelTrainerRayActor:
+#     def __init__(self):
+#         from ray.actor import ActorClass
+#         return ActorClass.remote(HfModelTrainer)

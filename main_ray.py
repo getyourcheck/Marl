@@ -52,9 +52,6 @@ train_loss_ref = actor_model.train_async(inputs.input_ids, inputs.input_ids)
 print("[INFO] 5.1 training async:", train_loss_ref)
 train_loss_res = actor_model.train_get(train_loss_ref)
 print("[INFO] 5.2 training result:", train_loss_res)
-print("[INFO] Since the model has been updated, the following statement should be False")
-print("[INFO] train_loss_res == train_loss", train_loss_res == train_loss)
-
 
 # ppo_loss = actor_model.compute_loss(input_ids, labels, loss_fn)
 # ptx_loss = actor_model.compute_loss(ptx_input_ids, ptx_labels, ptx_loss_fn)

@@ -47,10 +47,11 @@ class HfModelTrainer():
 
         # 3. Trainer
         parallel: dict = model_config["parallel"]
-        assert parallel['data']['size'] == 1
+        # assert parallel['data']['size'] == 1
         assert parallel['tensor']['size'] == 1
         assert parallel['pipeline']['size'] == 1
-        # self.trainer = Accelerator()  # TODO: multi-GPU training
+        self.step = 0
+        self.accelerator = Accelerator()  # TODO: multi-GPU training
 
         train_kwargs = model_config.get("train_kwargs")
         if train_kwargs is None:  # requires no training
@@ -66,7 +67,7 @@ class HfModelTrainer():
 
         lr_scheduler_type = train_kwargs.get("lr_scheduler", "linear")
         lr_scheduler_kwargs = train_kwargs.get("lr_scheduler_kwargs", {"num_warmup_steps": 5, "num_training_steps": 10})
-        self.lr_scheduler = transformers_get_scheduler(
+        self.lr_scheduler: _LRScheduler = transformers_get_scheduler(
             lr_scheduler_type,
             optimizer=self.optimizer,
             **lr_scheduler_kwargs,
@@ -81,30 +82,36 @@ class HfModelTrainer():
         labels: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
         attention_mask: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
+        loss_weights: Optional[list[float]] = None,
         **_ignored,
     ):
         """
         criterion: _Loss class, e.g., torch.nn.CrossEntropyLoss()
         """
-        # https://stackoverflow.com/questions/53994625/how-can-i-process-multi-loss-in-pytorch
-        print(f"[{self.__class__.__name__}] self.compute_loss()")
-        if type(criterion) == list:  # multiple inputs grouped to compute loss
-            assert len(input_ids) == len(labels) == len(criterion) == len(attention_mask)
-            losses = [0.0 for _ in range(len(criterion))]
+        if type(input_ids) == list:  # multiple inputs grouped to compute loss
+            # https://stackoverflow.com/questions/53994625/how-can-i-process-multi-loss-in-pytorch
+            print(f"[{self.__class__.__name__}] self.compute_loss() for multiple input batches")
+            assert len(input_ids) == len(labels) == len(criterion) == len(attention_mask) == len(loss_weights), \
+                f"{len(input_ids)} {len(labels)} {len(criterion)} {len(attention_mask)} {len(loss_weights)} must equal"
+            loss_cache = [0 for _ in range(len(input_ids))]
+            loss_weights = [x / float(len(loss_weights)) for x in loss_weights]  # normalized to 1
+
             for i in range(len(input_ids)):
                 loss = self.compute_loss_one(input_ids[i], labels[i], attention_mask[i], criterion[i])
-                losses[i] = loss
-            loss = sum(losses)
-            return loss
+                loss_cache[i] = loss * loss_weights[i]
+            loss_sum = sum(loss_cache)
+            return loss_sum
         else:
-            return self.compute_loss_one(input_ids, labels, attention_mask, criterion)
+            print(f"[{self.__class__.__name__}] self.compute_loss() for single input batch")
+            loss = self.compute_loss_one(input_ids, labels, attention_mask, criterion)
+            return loss
 
     def compute_loss_one(
         self,
         input_ids:torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        criterion: Optional[_Loss] = None,
+        criterion: Optional[_Loss] = torch.nn.CrossEntropyLoss,
     ) -> torch.Tensor:
         input_ids = input_ids.to(self.device)
         labels = input_ids.clone() if labels is None else labels.to(self.device)
@@ -113,10 +120,27 @@ class HfModelTrainer():
 
         if criterion is None:
             loss = self.model(**batch, use_cache=False).loss
+            return loss
         else:
-            logits = self.model(**batch, use_cache=False).logits
-            loss_fn = criterion()
-            loss = loss_fn(logits, labels)
+            # Adopted from: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py#L1200
+            logits: torch.Tensor = self.model(**batch, use_cache=False).logits
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            loss_fct = criterion()  # default: torch.nn.CrossEntropyLoss()
+            shift_logits = shift_logits.view(-1, self.model.config.vocab_size)
+            shift_labels = shift_labels.view(-1)
+            shift_labels = shift_labels.to(shift_logits.device)  # Enable model parallelism
+            loss = loss_fct(shift_logits, shift_labels)
+            return loss
+
+    def backward_step(self, loss: torch.Tensor, step_interval = 1):
+        print(f"[{self.__class__.__name__}] self.backward_step()")
+        loss.backward()  # TODO: self.accelerator.backward(loss)
+        self.step += 1
+        if self.step % step_interval == 0:
+            self.optimizer.step()
+            self.lr_scheduler.step()
+            self.optimizer.zero_grad()
         return loss
 
     def train(
@@ -125,15 +149,13 @@ class HfModelTrainer():
         labels: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         criterion = None,
+        step_interval: int = 1,
         **_ignored,
     ):
         print(f"[{self.__class__.__name__}] self.train()")
         criterion = torch.nn.CrossEntropyLoss
         loss = self.compute_loss(input_ids, labels, attention_mask, criterion)
-        loss.backward()  # TODO: self.accelerator.backward(loss)
-        self.optimizer.step()
-        self.lr_scheduler.step()
-        self.optimizer.zero_grad()
+        self.backward_step(loss, step_interval=step_interval)
         return loss
 
     # TODO: decouple infer() to infer() and generate()
@@ -187,6 +209,9 @@ class HfModelTrainer():
     def get_model(self):
         return self.model
 
+    @property
+    def vocab_size(self):
+        return self.model.config.vocab_size
 
 @ray.remote(num_cpus=0.1, num_gpus=0.1)
 class HfModelTrainerRayActor(HfModelTrainer):

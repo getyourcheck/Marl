@@ -7,7 +7,7 @@ import sys
 sys.path.extend(["marl/dataset"])
 from collections import defaultdict
 from transformers import AutoTokenizer
-from txt_loader import MultiSourceDatset, TxtSequenceDataset
+from txt_loader import TxtSequenceDataset
 
 if __name__ == "__main__":
     """ppo reader test here
@@ -25,13 +25,6 @@ if __name__ == "__main__":
     }
 
     """Create txt env for PPO """
-    ppo_dataset = MultiSourceDatset(
-        task_group_filename=dataset_config["task_group_filename"],
-        sub_dataset_type="file",
-    )
-    # print(ppo_dataset, ppo_dataset._task_group)
-
-    dataset_config["dataset"] = ppo_dataset
     txt_iter = TxtSequenceDataset(**dataset_config)
 
     test_iter = 0

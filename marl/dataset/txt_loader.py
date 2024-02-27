@@ -4,6 +4,7 @@ from typing import List
 import numpy as np
 import logging
 from dataclasses import dataclass
+import torch
 from torch.utils.data import IterableDataset
 from base import MultiSourceDatset, InfiniteDataset
 
@@ -20,7 +21,7 @@ class TxtSequenceDataset(IterableDataset):
     """ Create sequences from dataset.
     """
     def __init__(self,
-                 dataset: MultiSourceDatset,
+                 task_group_filename: str = None,
                  tokenizer=None,
                  start_token = "[UNUSED_TOKEN_146]user\n",
                  end_token = "[UNUSED_TOKEN_145]\n",
@@ -30,7 +31,11 @@ class TxtSequenceDataset(IterableDataset):
                  random_seed: int = 110,
                  **kwargs
                  ):
-        self.example_dataset = dataset
+        
+        assert task_group_filename is not None, "[Data error] Specify your data task config"
+        self.example_dataset = MultiSourceDatset(task_group_filename=task_group_filename,
+                                                sub_dataset_type="file",
+                                                )
         self.tokenizer = tokenizer
         self.start_token = start_token
         self.end_token = end_token
@@ -99,14 +104,28 @@ class TxtSequenceDataset(IterableDataset):
         tokens = [self.start_token] + tokens + [self.end_token]
 
         assert len(tokens) <= self.max_seq_len, "{}-{}".format(len(tokens), self.max_seq_len)
-
         if len(tokens) > self.max_seq_len:
             raise RuntimeError(f"token_ids is too long: {len(tokens)}")
         token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         # pos_ids = list(range(len(token_ids)))
+        token_ids = self._padding_data(torch.tensor(token_ids))
         
         return Sequence(group=example["group"],
                         idx=example["id"],
                         prompt=question + answer,
                         token_ids=token_ids,
                         )
+
+    def _padding_data(self, data):
+        data = np.array(data)
+        shape = data.shape
+        if len(shape) == 3:
+            res = np.zeros([1, self.max_seq_len, self.max_seq_len], dtype=data.dtype)
+            res[:,:shape[1], :shape[2]] = data
+        elif len(shape) == 2:
+            res = np.zeros([1, self.max_seq_len], dtype=data.dtype)
+            res[:,:shape[1]] = data
+        else:
+            res = np.zeros([self.max_seq_len], dtype=data.dtype)
+            res[:len(data)] = data
+        return res 

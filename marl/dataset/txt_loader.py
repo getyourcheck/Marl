@@ -11,6 +11,7 @@ from base import MultiSourceDatset, InfiniteDataset
 @dataclass
 class Sequence:
     token_ids: List[int]
+    prompt: str = None
     group: str = None
     idx: str = None
 
@@ -30,7 +31,7 @@ class TxtSequenceDataset(IterableDataset):
                  **kwargs
                  ):
         self.example_dataset = dataset
-        self.tokenizer = tokenizer #TODO
+        self.tokenizer = tokenizer
         self.start_token = start_token
         self.end_token = end_token
         self.max_seq_len = max_seq_len
@@ -88,28 +89,24 @@ class TxtSequenceDataset(IterableDataset):
         # print(example)
         question, answer = example["question"].strip(), example.get("answer", "").strip()
         
-        # tokens_question, tokens_answer = self.tokenizer.tokenize(question), self.tokenizer.tokenize(answer)
-        tokens_question, tokens_answer = question, answer
+        tokens_question, tokens_answer = self.tokenizer.tokenize(question), self.tokenizer.tokenize(answer)
         
-        tokens = (tokens_question
-                    + tokens_answer
-                    )
+        tokens = (tokens_question + tokens_answer)
 
         if len(tokens) <= 4:
             return None
         
-        # tokens = [self.start_token] + tokens
-        tokens = self.start_token + tokens
+        tokens = [self.start_token] + tokens + [self.end_token]
 
         assert len(tokens) <= self.max_seq_len, "{}-{}".format(len(tokens), self.max_seq_len)
 
         if len(tokens) > self.max_seq_len:
             raise RuntimeError(f"token_ids is too long: {len(tokens)}")
-        # token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
-        token_ids = tokens
-        pos_ids = list(range(len(token_ids)))
+        token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+        # pos_ids = list(range(len(token_ids)))
         
-        return Sequence(token_ids=token_ids,
-                        group=example["group"],
-                        idx=example["id"]
+        return Sequence(group=example["group"],
+                        idx=example["id"],
+                        prompt=question + answer,
+                        token_ids=token_ids,
                         )

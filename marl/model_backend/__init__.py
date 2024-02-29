@@ -1,5 +1,5 @@
-from .hf_model_trainer import HfModelTrainerRayActor
+from .hf_model_runner import HfModelRunnerRayActorGroup
 
 SUPPORTED_MODEL_RUNNERS = [
-    HfModelTrainerRayActor,
+    HfModelRunnerRayActorGroup,
 ]

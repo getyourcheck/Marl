@@ -2,15 +2,20 @@ import torch
 import random
 import numpy as np
 import os
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 from transformers import (AutoTokenizer, PreTrainedTokenizer,
                           PreTrainedTokenizerFast)
 
 from marl.logger import init_logger
+
 logger = init_logger(__name__)
 
-def set_seed(seed: int = 1234):
+DEFAULT_SEED_NUMBER = 1234
+
+def set_seed(seed: int = DEFAULT_SEED_NUMBER):
+    if seed is None or not isinstance(seed, int):
+        seed = DEFAULT_SEED_NUMBER
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -22,6 +27,7 @@ def set_seed(seed: int = 1234):
     torch.use_deterministic_algorithms(True, warn_only=True)
     # refer to https://docs.nvidia.com/cuda/cublas/index.html#results-reproducibility
     os.putenv("CUBLAS_WORKSPACE_CONFIG", os.environ.get("CUBLAS_WORKSPACE_CONFIG", ":4096:8"))
+
 
 def get_tokenizer(
     tokenizer_name: str,

@@ -4,14 +4,14 @@ Run `python tests/env/test_txt_loader.py`.
 """
 # import pytest
 import sys
+
 sys.path.extend(["marl/dataset"])
 from collections import defaultdict
 from transformers import AutoTokenizer
 from txt_loader import TxtSequenceDataset
 
 if __name__ == "__main__":
-    """ppo reader test here
-    """
+    """ppo reader test here"""
     model_path = "facebook/opt-1.3b"
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     dataset_config = {
@@ -33,7 +33,9 @@ if __name__ == "__main__":
         groups = defaultdict(int)
         for d in data:
             groups[d.group] += 1
-        assert sum(groups.values()) == dataset_config['num_samples_each_epoch'], "epoch data num error"
+        assert (
+            sum(groups.values()) == dataset_config["num_samples_each_epoch"]
+        ), "epoch data num error"
         # print(groups.values())
         test_iter += 1
         if test_iter == 100:

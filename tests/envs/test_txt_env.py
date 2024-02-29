@@ -4,6 +4,7 @@ Run `python tests/env/test_txt_env.py`.
 """
 # import pytest
 import sys
+
 sys.path.extend(["./", "marl/dataset"])
 from collections import defaultdict
 from transformers import AutoTokenizer
@@ -12,8 +13,7 @@ from marl.envs.txt_env import TxtEnv
 import torch
 
 if __name__ == "__main__":
-    """ppo reader test here
-    """
+    """ppo reader test here"""
     model_path = "facebook/opt-1.3b"
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     dataset_config = {
@@ -32,21 +32,26 @@ if __name__ == "__main__":
 
     # model
     from marl.config import Config
+
     trainer_config = Config(
-                            dict(
-                                model_path = "facebook/opt-1.3b",
-                                trainer_type = "huggingface",
-                                parallel = dict(
-                                    data = dict(size = 1),
-                                    tensor = dict(size = 1, mode = "1d"),
-                                    pipeline = dict(size = 1, interleaved_overlap = False),
-                                ),
-                            ),
-                        )
+        dict(
+            model_path="facebook/opt-1.3b",
+            trainer_type="huggingface",
+            parallel=dict(
+                data=dict(size=1),
+                tensor=dict(size=1, mode="1d"),
+                pipeline=dict(size=1, interleaved_overlap=False),
+            ),
+        ),
+    )
 
-    from marl.model_backend.hf_model_trainer import HfModelTrainer
-    actor_model = HfModelTrainer(model_config=trainer_config)
+    from marl.model_backend.hf_model_runner import HfModelRunner
 
-    trajectories = txt_env.rollout(policy=actor_model, generate_kwargs={"max_new_tokens": 128})
+    actor_model = HfModelRunner(model_config=trainer_config)
+    actor_model.initialize()
+
+    trajectories = txt_env.rollout(
+        policy=actor_model, generate_kwargs={"max_new_tokens": 128}
+    )
 
     print((trajectories.output_ids))

@@ -11,6 +11,7 @@ __pycache__/
 core.*
 
 # Developing Env
+.git
 .vscode
 .idea
 .DS_Store

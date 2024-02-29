@@ -1,0 +1,33 @@
+import torch
+from marl.logger import init_logger
+from marl.policy_output import PolicyOutput
+from ray.util.placement_group import PlacementGroup
+from ray.util.scheduling_strategies import (
+    PlacementGroupSchedulingStrategy,
+)
+from typing import TypeVar
+
+DEFAULT_NUM_CPUS = 1
+DEFAULT_NUM_GPUS = 1
+T = TypeVar("T")
+
+logger = init_logger(__name__)
+
+# Create Ray Actors
+def create_ray_actors(
+    name_prefix: str,
+    config: dict,
+    placement_group: PlacementGroup,
+    trainer_class: T,
+) -> list[T]:
+    ray_actors = [_ for _ in range(placement_group.bundle_count)]
+    for index in range(placement_group.bundle_count):
+        ray_actors[index] = trainer_class.options(
+            name=f"{name_prefix}_rank_{index}",
+            namespace=f"{trainer_class.__class__.__name__}",
+            scheduling_strategy=PlacementGroupSchedulingStrategy(
+                placement_group=placement_group,
+                placement_group_bundle_index=index,
+            ),
+        ).remote(config)
+    return ray_actors

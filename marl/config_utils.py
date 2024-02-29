@@ -1,6 +1,6 @@
 
 
-def get_gpu_requirement(trainer_config):
+def get_gpu_requirement(trainer_config: dict) -> int:
     # Calculates the number of GPUs required for a given trainer configuration.
     num_gpus = 1
     if "parallel" in trainer_config:

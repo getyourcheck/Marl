@@ -23,20 +23,30 @@ def test_models(
     torch_runner,
     model: str,
     dtype: str,
-    optimizer:str,
+    optimizer: str,
     example_prompts,
 ) -> None:
 
-    hf_model = hf_runner(model, dtype=dtype,optimizer=optimizer)
-    input_ids = hf_model.tokenizer(example_prompts, return_tensors="pt",padding=True,truncation=True, max_length=128, add_special_tokens=True).input_ids.cuda()
+    hf_model = hf_runner(model, dtype=dtype, optimizer=optimizer)
+    input_ids = hf_model.tokenizer(
+        example_prompts,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=128,
+        add_special_tokens=True,
+    ).input_ids.cuda()
     attention_mask = input_ids.not_equal(1).long()
     labels = torch.zeros(input_ids.shape, dtype=torch.long).cuda()
-    hf_model.train(input_ids=input_ids,attention_mask=attention_mask,labels=labels)
+    hf_model.train(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
 
-    torch_model = torch_runner(model, dtype=dtype,optimizer=optimizer)
-    torch_model.train(input_ids=input_ids,attention_mask=attention_mask,labels=labels)
+    torch_model = torch_runner(model, dtype=dtype, optimizer=optimizer)
+    torch_model.train(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
 
-    assert set(hf_model.model.state_dict().keys()) == set(torch_model.model.state_dict().keys())
+    assert set(hf_model.model.state_dict().keys()) == set(
+        torch_model.model.state_dict().keys()
+    )
     for key in hf_model.model.state_dict():
-        assert torch.equal(hf_model.model.state_dict()[key], torch_model.model.state_dict()[key])
-        
+        assert torch.equal(
+            hf_model.model.state_dict()[key], torch_model.model.state_dict()[key]
+        )

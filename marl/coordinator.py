@@ -1,7 +1,8 @@
 import ray
-from typing import List, Union
 from .model_server import ModelServer
 from .config_utils import get_resource_requirement
+from pathlib import Path
+ROOT_PATH = Path(__file__).parents[1].resolve()
 
 class Coordinator:
     def __init__(self, cluster_address: str, model_configs: dict):
@@ -13,14 +14,17 @@ class Coordinator:
 
         resources = get_resource_requirement(self.model_configs)
         print(f"[{self.__class__.__name__}] Required resources: {resources}")
+        runtime_env={"working_dir": ROOT_PATH}
+        print(f"[{self.__class__.__name__}] root_path: {ROOT_PATH}")
+
         try:
-            client_context = ray.init(address=self.cluster_address)
+            client_context = ray.init(address=self.cluster_address, runtime_env=runtime_env)
             print(f"[{self.__class__.__name__}] Connected to an existing ray cluster at {self.cluster_address}")
             self.context_type = "client"
             self.context = client_context
         except ConnectionError:
             print(f"[{self.__class__.__name__}] Error in connecting to {self.cluster_address}, try initializing a new ray cluster.")
-            ray_context = ray.init(address=None, resources=resources)
+            ray_context = ray.init(address=None, resources=resources, runtime_env=runtime_env)
             node_ip_address = ray_context.address_info['node_ip_address']
             print(f"[{self.__class__.__name__}] Initialize a ray cluster at {node_ip_address}")
             self.context_type = "server"
@@ -37,3 +41,10 @@ class Coordinator:
         for model_name, model in self.model_dict.items():  # naive serial initialize
             model.initialize()
             print(f"[{self.__class__.__name__}] {model_name} {model.__class__.__name__}.is_initialized: {model.is_initialized}")
+
+    def clean_up(self):
+        for _, model_server in self.model_dict.items():
+            if model_server.trainer != None:
+                model_server.trainer.release_resources()
+            if model_server.generator != None:
+                model_server.generator.release_resources()

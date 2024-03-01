@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 import torch
 from torch.utils.data import IterableDataset
-from base import MultiSourceDatset, InfiniteDataset
+from .base import MultiSourceDatset, InfiniteDataset
 
 
 @dataclass

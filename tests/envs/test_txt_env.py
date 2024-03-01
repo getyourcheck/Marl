@@ -7,15 +7,18 @@ import sys
 
 sys.path.extend(["./", "marl/dataset"])
 from collections import defaultdict
-from transformers import AutoTokenizer
 from marl.dataset.txt_loader import MultiSourceDatset, TxtSequenceDataset
+from marl.tokenizer.tokenizer_utils import get_tokenizer
 from marl.envs.txt_env import TxtEnv
 import torch
 
 if __name__ == "__main__":
     """ppo reader test here"""
-    model_path = "facebook/opt-1.3b"
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model_path = "internlm/internlm2-chat-1_8b-sft"
+    tokenizer_path = model_path
+    # tokenizer_path = "/cpfs01/shared/public/llm_model/tokenizer/v13.model" # also work
+    tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
+
     dataset_config = {
         "task_group_filename": "data/config/task_ppo.json",
         "tokenizer": tokenizer,
@@ -35,7 +38,8 @@ if __name__ == "__main__":
 
     trainer_config = Config(
         dict(
-            model_path="facebook/opt-1.3b",
+            model_path=model_path,
+            torch_dtype=torch.float16,
             trainer_type="huggingface",
             parallel=dict(
                 data=dict(size=1),
@@ -51,7 +55,9 @@ if __name__ == "__main__":
     actor_model.initialize()
 
     trajectories = txt_env.rollout(
-        policy=actor_model, generate_kwargs={"max_new_tokens": 128}
+        policy=actor_model, generate_kwargs={"max_new_tokens": 2048}
     )
 
     print((trajectories.output_ids))
+    for i, s in enumerate(trajectories.output_str):
+        print(f"[REPLY {i} BGN] {'#' * 20}\n{s}\n[REPLY {i} END] {'#' * 20}\n")

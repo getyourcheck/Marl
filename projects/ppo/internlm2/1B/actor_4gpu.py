@@ -1,5 +1,8 @@
+import torch
+
 actor = dict(
-    model_path="facebook/opt-1.3b",
+    model_path="internlm/internlm2-chat-1_8b-sft",
+    torch_dtype=torch.float16,
     model_class="actor",
     trainer_config=dict(
         trainer_type="huggingface",

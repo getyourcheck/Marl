@@ -12,7 +12,7 @@ from txt_loader import TxtSequenceDataset
 
 if __name__ == "__main__":
     """ppo reader test here"""
-    model_path = "facebook/opt-1.3b"
+    model_path = "internlm/internlm2-chat-1_8b-sft"
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     dataset_config = {
         "task_group_filename": "data/config/task_ppo.json",

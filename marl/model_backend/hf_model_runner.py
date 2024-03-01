@@ -6,7 +6,6 @@ from torch.optim.lr_scheduler import _LRScheduler
 from typing import Optional, Union
 from accelerate import Accelerator
 from transformers import (
-    AutoTokenizer,
     AutoModelForCausalLM,
     PreTrainedModel,
     get_scheduler as transformers_get_scheduler,
@@ -15,6 +14,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from ..policy_output import PolicyOutput
 from ..utils import set_seed
+from ..tokenizer.tokenizer_utils import get_tokenizer
 
 DEFAULT_MAX_NEW_TOKENS = 64
 
@@ -35,20 +35,18 @@ class HfModelRunner:
     def initialize(self):
         # 1. Model
         model_path = self.model_config.get("model_path")
+        torch_dtype = self.model_config.get("torch_dtype", "auto")
         self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
             pretrained_model_name_or_path=model_path,
             device_map="auto",
+            torch_dtype=torch_dtype,
             trust_remote_code=True,
         )
         self.vocab_size = self.model.config.vocab_size
 
         # 2. Tokenizer
         tokenizer_path = self.model_config.get("tokenizer_path", model_path)
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            tokenizer_path,
-            trust_remote_code=True,
-            padding_side="left",
-        )
+        self.tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
 
         # 3. Trainer
         parallel: dict = self.model_config["parallel"]
@@ -199,7 +197,7 @@ class HfModelRunner:
     # TODO: decouple infer() to infer() and generate()
     def infer(
         self,
-        input_ids: Union[torch.Tensor, list[torch.Tensor]],
+        input_ids: Union[torch.Tensor, str, list[str]],
         batch_size: Optional[int] = -1,
         tokenizer=None,
         chat_template=None,
@@ -207,6 +205,7 @@ class HfModelRunner:
         generate_kwargs: Optional[dict] = {},
         **_ignored,
     ) -> PolicyOutput:
+        input_ids = self.tokenize_str_input(inputs=input_ids)
         if step == 1:
             with torch.no_grad():
                 output_inf: CausalLMOutputWithPast = self.model(input_ids)
@@ -247,6 +246,24 @@ class HfModelRunner:
 
     def set_seed(self, seed=None):
         set_seed(seed)
+
+    def tokenize_str_input(self, inputs: Union[list[str], str]) -> torch.Tensor:
+        if isinstance(inputs, torch.Tensor):
+            return inputs
+        elif isinstance(inputs, str):
+            input_strs = list(inputs)
+        elif isinstance(inputs, list):
+            topping = inputs[0]
+            if isinstance(topping, torch.Tensor):
+                print(f"[{self.__class__.__name__}] Cat list[torch.Tensor]: {inputs}")
+                return torch.cat(inputs, dim=0)
+            if not isinstance(topping, str):
+                raise TypeError(f"Unsupported type: type({topping}) inputs({inputs})")
+            input_strs = inputs
+
+        print(f"[{self.__class__.__name__}] encode string input into input_ids ...")
+        output = self.tokenizer(input_strs, return_tensors="pt")
+        return output.input_ids
 
 
 import ray

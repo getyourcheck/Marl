@@ -1,8 +1,12 @@
+import torch
+
 actor = dict(
     # RLHF
-    # model_path = "/cpfs01/shared/public/public_hdd/wangyudong/ckpt/exps/20231227/aliyun_Luyou_1B_FT_0.19/3920_hf",
-    model_path="facebook/opt-1.3b",
+    # model_path="/cpfs01/shared/public/llm_model/ckpt/Luyou_1B/3920_hf",
+    # tokenizer_path="/cpfs01/shared/public/llm_model/tokenizer/v13.model",
+    model_path="internlm/internlm2-chat-1_8b-sft",
     model_class="actor",
+    torch_dtype=torch.float16,
     trainer_config=dict(
         trainer_type="huggingface",
         train_kwargs=dict(

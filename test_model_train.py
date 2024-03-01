@@ -1,9 +1,12 @@
 # %%
+import torch
 from marl.config import Config
+from marl.tokenizer.tokenizer_utils import get_tokenizer
 
 trainer_config = Config(
     dict(
-        model_path="facebook/opt-1.3b",
+        model_path="internlm/internlm2-chat-1_8b-sft",
+        torch_dtype=torch.float16,
         trainer_type="huggingface",
         train_kwargs=dict(
             micro_bsz=1,
@@ -25,9 +28,8 @@ import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # avoid Accelerator() from using multi-GPU
 
-from transformers import AutoTokenizer
-
-tokenizer = AutoTokenizer.from_pretrained(trainer_config.get("model_path"))
+tokenizer_path = trainer_config.get("tokenizer_path", trainer_config.get("model_path"))
+tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
 
 input_text_list = ["A list of colors: red, blue", "Portugal is"]
 inputs = tokenizer(input_text_list, return_tensors="pt", padding=True).to("cuda")

@@ -1,0 +1,8 @@
+REWARD_SCORE_ID = 30401
+
+HUMAN_PREFIX = "<|User|>:"
+ASSISTANT_PREFIX = "<|Bot|>:"
+EOH = "\n"
+EOA = "<TOKENS_UNUSED_1>\n"
+EOA_END = "<TOKENS_UNUSED_1>"
+

@@ -3,6 +3,7 @@ from transformers import AutoTokenizer
 from typing import Optional
 
 from .model_backend import HfModelRunnerRayActorGroup
+from .tokenizer.tokenizer_utils import get_tokenizer
 
 
 class ModelServer:
@@ -23,8 +24,10 @@ class ModelServer:
         model_path: str = self.model_config["model_path"]  # requisite
         trainer_config: dict = self.model_config["trainer_config"]  # requisite
         generator_config: dict = self.model_config.get("generator_config")  # optional
+        tokenizer_path: str = self.model_config.get("tokenizer_path", model_path)  # opt
 
         trainer_config["model_path"] = model_path
+        trainer_config["tokenizer_path"] = tokenizer_path
         trainer_type: str = trainer_config.get("trainer_type", "huggingface")
         if trainer_type.lower() == "huggingface":
             self.trainer = HfModelRunnerRayActorGroup(
@@ -38,12 +41,11 @@ class ModelServer:
 
         # Tokenizer is initialized in ModelServer (not ModelTrainer) to avoid remote call
         # FIXME: os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_path, trust_remote_code=True
-        )
+        self.tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
 
         if generator_config is not None:  # optional
             generator_config["model_path"] = model_path
+            generator_config["tokenizer_path"] = tokenizer_path
             shared_with_trainer = generator_config.get("shared_with_trainer", True)
             if shared_with_trainer:
                 self.generator = self.trainer

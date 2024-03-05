@@ -25,7 +25,10 @@ def get_resource_requirement(model_configs: dict) -> dict:
     """
 
     resources = {"num_gpus": 0}
-    for _, model_config in model_configs.items():
+    for name, model_config in model_configs.items():
+        if "trainer_config" not in model_config:
+            print(f"[WARNING] {name} has no trainer_config. SKIP.")
+            continue
         trainer_config = model_config["trainer_config"]
         num_gpus = get_gpu_requirement(trainer_config)
 

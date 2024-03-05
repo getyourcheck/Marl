@@ -4,7 +4,7 @@ from typing import Optional
 
 from .model_backend import HfModelRunnerRayActorGroup
 from .tokenizer.tokenizer_utils import get_tokenizer
-
+from .config_consts import *
 
 class ModelServer:
     # Initialize
@@ -22,19 +22,21 @@ class ModelServer:
 
     def initialize(self):
         model_path: str = self.model_config["model_path"]  # requisite
+        model_type: str = self.model_config["model_type"]  # requisite
         trainer_config: dict = self.model_config["trainer_config"]  # requisite
         generator_config: dict = self.model_config.get("generator_config")  # optional
         tokenizer_path: str = self.model_config.get("tokenizer_path", model_path)  # opt
 
         trainer_config["model_path"] = model_path
+        trainer_config["model_type"] = model_type
         trainer_config["tokenizer_path"] = tokenizer_path
-        trainer_type: str = trainer_config.get("trainer_type", "huggingface")
-        if trainer_type.lower() == "huggingface":
+        trainer_type = trainer_config.get("trainer_type", ENGINE_HUGGINGFACE).lower()
+        if trainer_type == ENGINE_HUGGINGFACE:
             self.trainer = HfModelRunnerRayActorGroup(
                 name=f"{self.model_name}_trainer", config=trainer_config
             )
-        elif trainer_type.lower() == "internevo":
-            raise NotImplementedError(f"{generator_type.lower()}.")
+        elif trainer_type == ENGINE_INTERNEVO:
+            raise NotImplementedError(f"{generator_type}.")
         else:
             raise ValueError(f"No trainer is registered with type '{trainer_type}'.")
         self.model_ref = self.trainer.get_model()  # an reference
@@ -43,7 +45,7 @@ class ModelServer:
         # FIXME: os.environ["TOKENIZERS_PARALLELISM"] = "false"
         self.tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
 
-        self.generator = self.trainer  # use trainer for inference by default
+        self.generator = self.trainer  # use trainer for self.generate() by default
         if generator_config is not None:  # optional
             generator_config["model_path"] = model_path
             generator_config["tokenizer_path"] = tokenizer_path
@@ -51,16 +53,15 @@ class ModelServer:
             if shared_with_trainer:
                 self.generator = self.trainer
             else:
-                generator_config.update("")
                 generator_type: str = generator_config.get(
-                    "generator_type", "huggingface"
-                )
-                if generator_type.lower() == "huggingface":
+                    "generator_type", ENGINE_HUGGINGFACE
+                ).lower()
+                if generator_type == ENGINE_HUGGINGFACE:
                     self.generator = HfModelRunnerRayActorGroup(
                         f"{self.model_name}_generator", generator_config
                     )
-                elif generator_type.lower() == "vllm":
-                    raise NotImplementedError(f"{generator_type.lower()}.")
+                elif generator_type == ENGINE_VLLM:
+                    raise NotImplementedError(f"{generator_type}.")
                 else:
                     raise ValueError(
                         f"No generator is registered with type '{generator_type}'."
@@ -95,25 +96,24 @@ class ModelServer:
         )
 
     # Inference
-    def infer_async(self, input_ids, *args, **infer_kwargs):
-        return self.trainer.infer_async(input_ids, *args, **infer_kwargs)
+    def infer_async(self, inputs, *args, **infer_kwargs):
+        return self.trainer.infer_async(inputs, *args, **infer_kwargs)
 
     def infer_get(self, object_refs, timeout: Optional[float] = None):
         return self.trainer.infer_get(object_refs, timeout=timeout)
 
-    def infer(self, input_ids, *args, **infer_kwargs):
-        return self.trainer.infer(input_ids, *args, **infer_kwargs)
+    def infer(self, inputs, *args, **infer_kwargs):
+        return self.trainer.infer(inputs, *args, **infer_kwargs)
 
     # Generation
-    def generate_async(self, input_ids, *args, **generate_kwargs):
-        return self.generator.generate_async(input_ids, *args, **generate_kwargs)
+    def generate_async(self, inputs, *args, **generate_kwargs):
+        return self.generator.generate_async(inputs, *args, **generate_kwargs)
 
     def generate_get(self, object_refs, timeout: Optional[float] = None):
         return self.generator.generate_get(object_refs, timeout=timeout)
 
-    def generate(self, input_ids, *args, **generate_kwargs):
-        return self.generator.generate(input_ids, *args, **generate_kwargs)
-
+    def generate(self, inputs, *args, **generate_kwargs):
+        return self.generator.generate(inputs, *args, **generate_kwargs)
 
     # Others
     def set_seed(self, seed: int = None):

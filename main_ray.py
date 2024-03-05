@@ -66,5 +66,31 @@ train_loss_res = actor_model.train_get(train_loss_ref)
 print("[INFO] 5.2 training result:", train_loss_res)
 print("[INFO] 4.1 training loss == 5.2 training loss:", train_loss == train_loss_res)
 
-# %% 5. clean up
+# %% 5. reward models
+print()
+reward_model = model_dict["reward"]
+chat_1 = [
+    {"role": "user", "content": "Hello! What's your name?"},
+    {"role": "assistant", "content": "My name is InternLM2!"},
+]
+chat_2 = [
+    {"role": "user", "content": "Hello! What's your name?"},
+    {"role": "assistant", "content": "I don't know."},
+]
+
+chat_1_str = "<s><|im_start|>user\nHello! What's your name?<|im_end|>\n<|im_start|>assistant\nMy name is InternLM2!<|im_end|>\n"
+score0 = reward_model.infer(inputs=chat_1_str)  # get_score
+print("[INFO] 6.1 score0:", score0.logits)
+
+score1 = reward_model.infer(inputs=chat_1)  # get_score
+print("[INFO] 6.2 score1:", score1.logits)
+
+score2 = reward_model.infer(inputs=chat_2)  # get_score
+print("[INFO] 6.3 score2:", score2.logits)
+assert score1.logits > score2.logits
+print("[INFO] 6.1 score1 > 6.2 score2:", score1.logits > score2.logits)
+
+scores = reward_model.infer(inputs=[chat_1, chat_2])  # get_scores
+print("[INFO] 6.4 scores:", scores.logits)
+# %% 6. clean up
 coordinator.clean_up()

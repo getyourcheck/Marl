@@ -2,8 +2,8 @@ import torch
 
 actor = dict(
     model_path="internlm/internlm2-chat-1_8b-sft",
+    model_type="actor",
     torch_dtype=torch.float16,
-    model_class="actor",
     trainer_config=dict(
         trainer_type="huggingface",
         train_kwargs=dict(

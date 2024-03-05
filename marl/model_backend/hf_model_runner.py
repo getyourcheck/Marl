@@ -9,13 +9,21 @@ from transformers import (
     AutoModelForCausalLM,
     PreTrainedModel,
     get_scheduler as transformers_get_scheduler,
+    PreTrainedTokenizer,
+    PreTrainedTokenizerFast,
 )
-from transformers.modeling_outputs import CausalLMOutputWithPast
+
+from transformers.modeling_outputs import (
+    CausalLMOutputWithPast,
+    SequenceClassifierOutputWithPast,
+)
 from transformers.generation.utils import GenerateDecoderOnlyOutput
 
 from ..policy_output import PolicyOutput
 from ..utils import set_seed
 from ..tokenizer.tokenizer_utils import get_tokenizer
+from .internlm2_reward import InternLM2ForRewardModel
+from ..config_consts import *
 
 DEFAULT_NEW_TOKENS = 64
 MAXIMUM_NEW_TOKENS = 1024
@@ -37,13 +45,24 @@ class HfModelRunner:
     def initialize(self):
         # 1. Model
         model_path = self.model_config.get("model_path")
+        model_type = self.model_config.get("model_type", "").lower()
         torch_dtype = self.model_config.get("torch_dtype", "auto")
-        self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
-            pretrained_model_name_or_path=model_path,
-            device_map="auto",
-            torch_dtype=torch_dtype,
-            trust_remote_code=True,
-        )
+        if model_type == MODEL_TYPE_REWARD or model_type == MODEL_TYPE_CRITIC:
+            # TODO: support reward model from other classes
+            self.model: PreTrainedModel = InternLM2ForRewardModel.from_pretrained(
+                pretrained_model_name_or_path=model_path,
+                device_map="auto",
+                torch_dtype=torch_dtype,
+                trust_remote_code=True,
+                attn_implementation="flash_attention_2",
+            )
+        else:
+            self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
+                pretrained_model_name_or_path=model_path,
+                device_map="auto",
+                torch_dtype=torch_dtype,
+                trust_remote_code=True,
+            )
         self.vocab_size = self.model.config.vocab_size
 
         # 2. Tokenizer
@@ -199,7 +218,7 @@ class HfModelRunner:
     @torch.inference_mode()
     def infer(
         self,
-        input_ids: Union[torch.Tensor, str, list[str]],
+        inputs: Union[torch.Tensor, list[dict], list[list[dict]]],
         batch_size: Optional[int] = -1,
         tokenizer=None,  # reward model may use tokenizer in inference
         attention_mask=None,
@@ -209,8 +228,62 @@ class HfModelRunner:
         infer_kwargs: Optional[dict] = {},
         **_ignored,
     ) -> PolicyOutput:
-        print(f"[{self.__class__.__name__}] self.infer() kwargs: {infer_kwargs}")
+        model_type = self.model_config.get("model_type", "").lower()
+        if model_type == MODEL_TYPE_REWARD or model_type == MODEL_TYPE_CRITIC:
+            if isinstance(inputs, torch.Tensor):
+                input_ids = inputs
+                print(f"[{self.__class__.__name__}] self.reward_model.forward(ids)")
+                fwd_output: SequenceClassifierOutputWithPast = self.model(
+                    input_ids=input_ids,
+                    output_attentions=output_attentions,
+                    output_hidden_states=output_hidden_states,
+                    attention_mask=attention_mask,
+                    **infer_kwargs,
+                )
+                return PolicyOutput(**fwd_output)
+            elif isinstance(inputs, str):
+                print(f"[{self.__class__.__name__}] self.reward_model.forward(str)")
+                tokenizer = self.tokenizer if tokenizer is None else tokenizer
+                input_ids = tokenizer.encode(inputs, return_tensors="pt")
+                input_ids = torch.cat(
+                    [
+                        input_ids,
+                        torch.tensor(
+                            [[self.model.reward_token_id]], dtype=torch.long
+                        ).expand(input_ids.shape[0], 1),
+                    ],
+                    dim=1,
+                ).to(self.device)
 
+                attention_mask = input_ids.new_ones(input_ids.size(), dtype=torch.bool)
+                fwd_output: SequenceClassifierOutputWithPast = self.model(
+                    input_ids=input_ids, attention_mask=attention_mask, **infer_kwargs
+                )
+                score = fwd_output.logits.cpu().item()
+                return PolicyOutput(logits=torch.Tensor([score]))
+            elif isinstance(inputs, list):
+                if isinstance(inputs[0], dict):
+                    print(f"[{self.__class__.__name__}] self.reward_model.score(conv)")
+                    score: float = self.model.get_score(
+                        conversation=inputs, tokenizer=self.tokenizer, **infer_kwargs
+                    )
+                    return PolicyOutput(logits=torch.Tensor([score]))
+                elif isinstance(inputs[0], list):
+                    assert isinstance(inputs[0][0], dict)
+                    print(f"[{self.__class__.__name__}] self.reward_model.scores(conv)")
+                    scores: list = self.model.get_scores(
+                        conversations=inputs, tokenizer=self.tokenizer, **infer_kwargs
+                    )
+                    return PolicyOutput(logits=torch.Tensor(scores))
+                else:
+                    raise NotImplementedError
+            else:
+                raise NotImplementedError
+
+        # model_type == "actor", "reference", ...
+        print(f"[{self.__class__.__name__}] self.infer() kwargs: {infer_kwargs}")
+        assert isinstance(inputs, torch.Tensor)
+        input_ids: torch.Tensor = inputs.to(self.device)
         model_output: CausalLMOutputWithPast = self.model(
             input_ids,
             output_attentions=output_attentions,
@@ -231,7 +304,7 @@ class HfModelRunner:
     @torch.inference_mode()
     def generate(
         self,
-        input_ids: Union[torch.Tensor, str, list[str]],
+        inputs: Union[torch.Tensor, str, list[str]],
         batch_size: Optional[int] = -1,
         tokenizer=None,
         attention_mask=None,
@@ -245,7 +318,8 @@ class HfModelRunner:
         **_ignored,
     ) -> PolicyOutput:
         print(f"[{self.__class__.__name__}] self.generate() kwargs: {generate_kwargs}")
-        input_ids = self.tokenize_str_input(inputs=input_ids)
+        input_ids: torch.Tensor = self.tokenize_str_input(inputs=inputs)
+        assert isinstance(input_ids, torch.Tensor)
 
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             model = self.accelerator.unwrap_model(self.model)

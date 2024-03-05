@@ -43,3 +43,15 @@ class RayActorMixin:
 
     def get_free_port(self):
         return get_free_port()
+
+    def get_memory_stats_of_visible_devices(self):
+        memory_stats = {}
+        visible_gpu_ids = []
+        if "CUDA_VISIBLE_DEVICES" in os.environ:
+            visible_gpu_ids = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
+        else:
+            visible_gpu_ids = [str(index) for index in range(torch.cuda.device_count())]
+        for index, gpu_id in enumerate(visible_gpu_ids):
+            status = torch.cuda.memory_stats(device=index)
+            memory_stats[gpu_id] = status
+        return memory_stats

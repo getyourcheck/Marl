@@ -18,13 +18,13 @@ class Coordinator:
         print(f"[{self.__class__.__name__}] root_path: {ROOT_PATH}")
 
         try:
-            client_context = ray.init(address=self.cluster_address, runtime_env=runtime_env)
+            client_context = ray.init(address=self.cluster_address, runtime_env=runtime_env, ignore_reinit_error=True)
             print(f"[{self.__class__.__name__}] Connected to an existing ray cluster at {self.cluster_address}")
             self.context_type = "client"
             self.context = client_context
         except ConnectionError:
             print(f"[{self.__class__.__name__}] Error in connecting to {self.cluster_address}, try initializing a new ray cluster.")
-            ray_context = ray.init(address=None, resources=resources, runtime_env=runtime_env)
+            ray_context = ray.init(address=None, resources=resources, runtime_env=runtime_env, ignore_reinit_error=True)
             node_ip_address = ray_context.address_info['node_ip_address']
             print(f"[{self.__class__.__name__}] Initialize a ray cluster at {node_ip_address}")
             self.context_type = "server"

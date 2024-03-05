@@ -1,10 +1,11 @@
 import torch
-
+import os
 from torch.nn.modules.loss import _Loss
 from torch.optim.lr_scheduler import _LRScheduler
 
 from typing import Optional, Union
 from accelerate import Accelerator
+from accelerate.utils import FullyShardedDataParallelPlugin
 from transformers import (
     AutoModelForCausalLM,
     PreTrainedModel,
@@ -43,6 +44,11 @@ class HfModelRunner:
         self.model_config: dict = model_config
 
     def initialize(self):
+        # 0. Environment
+        envs = self.model_config.get("envs",{})
+        for key, value in envs.items():
+            os.environ[key] = value
+        
         # 1. Model
         model_path = self.model_config.get("model_path")
         model_type = self.model_config.get("model_type", "").lower()
@@ -74,7 +80,10 @@ class HfModelRunner:
         assert parallel["tensor"]["size"] == 1  # TODO: support TP
         assert parallel["pipeline"]["size"] == 1  # TODO: support PP
         self.step = 0
-        self.accelerator = Accelerator()
+        if "mode" in parallel["data"] and parallel["data"]["mode"] == "fsdp":
+            self.accelerator = Accelerator(fsdp_plugin=FullyShardedDataParallelPlugin())
+        else:
+            self.accelerator = Accelerator()
 
         train_kwargs = self.model_config.get("train_kwargs")
         if train_kwargs is None:  # requires no training

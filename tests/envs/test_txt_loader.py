@@ -8,7 +8,7 @@ import sys
 sys.path.extend(["marl/dataset"])
 from collections import defaultdict
 from transformers import AutoTokenizer
-from txt_loader import TxtSequenceDataset
+from marl.dataset.txt_loader import TxtSequenceDataset
 
 if __name__ == "__main__":
     """ppo reader test here"""

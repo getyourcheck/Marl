@@ -8,7 +8,7 @@ from transformers import (
     AdamW,
     AutoConfig,
 )
-from marl.utils import get_tokenizer
+from marl.tokenizer.tokenizer_utils import get_tokenizer
 from accelerate import Accelerator
 
 ## CONST VARIABLES

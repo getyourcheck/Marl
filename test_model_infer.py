@@ -1,4 +1,5 @@
 # %%
+
 import torch
 from marl.config import Config
 from marl.tokenizer.tokenizer_utils import get_tokenizer
@@ -34,12 +35,15 @@ from marl.model_backend.hf_model_runner import HfModelRunner
 mr = HfModelRunner(model_config=trainer_config)
 mr.initialize()
 
-infer_config = {"max_new_tokens": 64}
-output_inf = mr.infer(inputs.input_ids, step=1, **infer_config)
+# %%
+output_inf = mr.infer(inputs.input_ids)  # by default: step=1, output_logits=True
 print(output_inf)
 
-output_gen = mr.infer(inputs.input_ids, **infer_config)
+output_gen = mr.generate(inputs.input_ids, step=1, output_logits=True)
 print(output_gen)
+
+print("[ASSERT TRUE] output_gen first token's logits == output_inf last token's result")
+assert torch.equal(output_gen.logits[0], output_inf.logits[:, -1, :])
 
 # %%
 import ray
@@ -48,13 +52,14 @@ from marl.model_backend.hf_model_runner import HfModelRunnerRayActorGroup
 ray.init(ignore_reinit_error=True)
 mra = HfModelRunnerRayActorGroup(name="mra", config=trainer_config)
 
-infer_config = {"max_new_tokens": 64}
-output_inf_ray = mra.infer(inputs.input_ids, step=1, **infer_config)
+output_inf_ray = mra.infer(inputs.input_ids)  # by default: output_logits=True
 print(output_inf_ray)
-print("output_inf_ray == output_inf: ", output_inf_ray == output_inf, "\n")
+print("[ASSERT TRUE] output_inf_ray == output_inf: ", output_inf_ray == output_inf, "\n")
 assert output_inf_ray == output_inf
 
-output_gen_ray = mra.infer(inputs.input_ids, **infer_config)
+output_gen_ray = mra.generate(inputs.input_ids, step=1, output_logits=True)
 print(output_gen_ray)
-print("output_gen_ray == output_gen: ", output_gen_ray == output_gen, "\n")
+print("[ASSERT TRUE] output_gen_ray == output_gen: ", output_gen_ray == output_gen, "\n")
 assert output_gen_ray == output_gen
+
+# %%

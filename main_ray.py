@@ -3,6 +3,7 @@
 # from transformers import AutoTokenizer, AutoModelForCausalLM
 # from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer
 # from accelerate import Accelerator
+import torch
 from marl.coordinator import Coordinator
 from marl.config import Config
 
@@ -29,21 +30,26 @@ inputs = actor_model.tokenizer(input_text_list, return_tensors="pt", padding=Tru
 inputs.input_ids = inputs.input_ids.to("cuda")
 input_ids = inputs.input_ids
 
-output_inf = actor_model.infer(input_ids, step=1)
-print("[INFO] 1. One-step inference:", output_inf)
+output_inf = actor_model.infer(input_ids)  # by default: output_logits=True
+print("[INFO] 1. one-step inference:", output_inf)
 
-generate_kwargs = {"max_new_tokens": 64}
-output_gen_ref = actor_model.infer_async(input_ids, generate_kwargs=generate_kwargs)
-print("[INFO] 2.1 generation async:", output_gen_ref)
-output_gen_res = actor_model.infer_get(output_gen_ref)
-print("[INFO] 2.2 generation result:", output_gen_res)
+output_inf_ref = actor_model.infer_async(input_ids)
+print("[INFO] 2.1 one-step inference async:", output_inf_ref)
+output_inf_ray = actor_model.infer_get(output_inf_ref)
+print("[INFO] 2.2 one-step inference result:", output_inf_ray)
+print("[INFO] ASSERT output_inf_ray == output_inf:", output_inf_ray == output_inf)
+assert output_inf_ray == output_inf
 
-output_gen = actor_model.infer(input_ids, generate_kwargs=generate_kwargs)
-print("[INFO] 3. generation sync:", output_gen)
+output_gen_ref = actor_model.generate_async(
+    input_ids, step=1, output_logits=True, output_str=True
+)
+output_gen_ray = actor_model.generate_get(output_gen_ref)
+print("[INFO] 3. generation async:", output_gen_ray)
+print("[INFO] ASSERT output_gen first token's logits == output_inf last token's result")
+assert torch.equal(output_gen_ray.logits[0], output_inf.logits[:, -1, :])
 
-print("[INFO] output_gen_res == output_gen:", output_gen_res == output_gen)
 print("[INFO] output in str:")
-for i, outstr in enumerate(output_gen.output_str):
+for i, outstr in enumerate(output_gen_ray.output_str):
     print(f"[INFO] {i}/n:\n{outstr}")
 
 # %% 4. train

@@ -43,6 +43,7 @@ class ModelServer:
         # FIXME: os.environ["TOKENIZERS_PARALLELISM"] = "false"
         self.tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
 
+        self.generator = self.trainer  # use trainer for inference by default
         if generator_config is not None:  # optional
             generator_config["model_path"] = model_path
             generator_config["tokenizer_path"] = tokenizer_path
@@ -94,20 +95,31 @@ class ModelServer:
         )
 
     # Inference
-    # TODO: decouple infer() to infer() and generate()
     def infer_async(self, input_ids, *args, **infer_kwargs):
-        return self.generator.infer_async(input_ids, *args, **infer_kwargs)
+        return self.trainer.infer_async(input_ids, *args, **infer_kwargs)
 
     def infer_get(self, object_refs, timeout: Optional[float] = None):
-        return self.generator.infer_get(object_refs, timeout=timeout)
+        return self.trainer.infer_get(object_refs, timeout=timeout)
 
     def infer(self, input_ids, *args, **infer_kwargs):
-        return self.generator.infer(input_ids, *args, **infer_kwargs)
+        return self.trainer.infer(input_ids, *args, **infer_kwargs)
+
+    # Generation
+    def generate_async(self, input_ids, *args, **generate_kwargs):
+        return self.generator.generate_async(input_ids, *args, **generate_kwargs)
+
+    def generate_get(self, object_refs, timeout: Optional[float] = None):
+        return self.generator.generate_get(object_refs, timeout=timeout)
+
+    def generate(self, input_ids, *args, **generate_kwargs):
+        return self.generator.generate(input_ids, *args, **generate_kwargs)
+
 
     # Others
     def set_seed(self, seed: int = None):
         self.trainer.set_seed(seed)
-        self.generator.set_seed(seed)
+        if not self.generator_eq_trainer:
+            self.generator.set_seed(seed)
 
     def _load_chat_template(self, chat_template):
         # adopted from: https://github.com/vllm-project/vllm/blob/0e163fce18594c7e29dc5a143dd6b33d213fcbf3/vllm/entrypoints/openai/serving_chat.py#L245

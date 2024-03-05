@@ -10,11 +10,11 @@ class PolicyOutput(ModelOutput):
     output_str: Optional[list[str]] = None
     loss: Optional[torch.Tensor] = None
     logits: Optional[torch.Tensor] = None
-    logits_entropy: Optional[torch.Tensor] = None
-    log_probs: Optional[torch.Tensor] = None
-    top_logprobs: Optional[torch.Tensor] = None
-    hidden_states: Optional[torch.Tensor] = None
     attentions: Optional[torch.Tensor] = None
+    hidden_states: Optional[torch.Tensor] = None
+    logits_entropy: Optional[torch.Tensor] = None
+    logprobs: Optional[torch.Tensor] = None
+    top_logprobs: Optional[torch.Tensor] = None
 
     def __eq__(self, other: ModelOutput):
         if len(self.keys()) != len(other.keys()):
@@ -23,12 +23,21 @@ class PolicyOutput(ModelOutput):
             if k not in other:
                 return False
             vother = other[k]
-            if type(v) == torch.Tensor:
-                eq = torch.equal(v, vother)
+
+            if isinstance(v, torch.Tensor):
+                if not torch.equal(v, vother):
+                    return False
+            elif isinstance(v, tuple): # tuple(torch.Tensor)
+                for i, j in zip(v, vother):
+                    if isinstance(i, torch.Tensor):
+                        if not torch.equal(i, j):
+                            return False
+                    else:
+                        if i != j:
+                            return False
             else:
-                eq = (v == vother)
-            if eq is False:
-                return False
+                if v != vother:
+                    return False
         return True
 
 

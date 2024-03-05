@@ -11,12 +11,14 @@ from transformers import (
     get_scheduler as transformers_get_scheduler,
 )
 from transformers.modeling_outputs import CausalLMOutputWithPast
+from transformers.generation.utils import GenerateDecoderOnlyOutput
 
 from ..policy_output import PolicyOutput
 from ..utils import set_seed
 from ..tokenizer.tokenizer_utils import get_tokenizer
 
-DEFAULT_MAX_NEW_TOKENS = 64
+DEFAULT_NEW_TOKENS = 64
+MAXIMUM_NEW_TOKENS = 1024
 
 """
 HfModelRunner can be individually called by other process
@@ -194,50 +196,96 @@ class HfModelRunner:
         return loss
 
     # Inference
-    # TODO: decouple infer() to infer() and generate()
+    @torch.inference_mode()
     def infer(
         self,
         input_ids: Union[torch.Tensor, str, list[str]],
         batch_size: Optional[int] = -1,
+        tokenizer=None,  # reward model may use tokenizer in inference
+        attention_mask=None,
+        output_logits=True,
+        output_attentions=False,
+        output_hidden_states=False,
+        infer_kwargs: Optional[dict] = {},
+        **_ignored,
+    ) -> PolicyOutput:
+        print(f"[{self.__class__.__name__}] self.infer() kwargs: {infer_kwargs}")
+
+        model_output: CausalLMOutputWithPast = self.model(
+            input_ids,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            attention_mask=attention_mask,
+            **infer_kwargs,
+        )
+        output = PolicyOutput()
+        if output_logits:
+            output["logits"] = model_output["logits"]
+        if output_attentions:
+            output["attentions"] = model_output["attentions"]
+        if output_hidden_states:
+            output["hidden_states"] = model_output["hidden_states"]
+        return output
+
+    # Generate
+    @torch.inference_mode()
+    def generate(
+        self,
+        input_ids: Union[torch.Tensor, str, list[str]],
+        batch_size: Optional[int] = -1,
         tokenizer=None,
+        attention_mask=None,
+        step=-1,
+        output_str=False,
+        output_logits=False,
+        output_attentions=False,
+        output_hidden_states=False,
         chat_template=None,
-        step: Optional[int] = -1,
         generate_kwargs: Optional[dict] = {},
         **_ignored,
     ) -> PolicyOutput:
+        print(f"[{self.__class__.__name__}] self.generate() kwargs: {generate_kwargs}")
         input_ids = self.tokenize_str_input(inputs=input_ids)
-        if step == 1:
-            with torch.no_grad():
-                output_inf: CausalLMOutputWithPast = self.model(input_ids)
-                return PolicyOutput(logits=output_inf.logits)
-        else:
-            return self.generate(input_ids, step, tokenizer, **generate_kwargs)
 
-    @torch.inference_mode()
-    def generate(
-        self, input_ids, step=-1, tokenizer=None, **generate_kwargs
-    ) -> PolicyOutput:
-        model = self.model
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             model = self.accelerator.unwrap_model(self.model)
-        tokenizer = self.tokenizer if tokenizer is None else tokenizer
-        max_new_tokens = DEFAULT_MAX_NEW_TOKENS if step <= 0 else step
-        generate_kwargs.setdefault("max_new_tokens", max_new_tokens)
-        print(f"[{self.__class__.__name__}] generate_kwargs: {generate_kwargs}")
+        else:
+            model = self.model
 
-        output_ids = model.generate(
+        max_new_tokens = (
+            MAXIMUM_NEW_TOKENS
+            if "eos_token_id" in generate_kwargs
+            else DEFAULT_NEW_TOKENS
+        )
+        max_new_tokens = step if step > 0 else max_new_tokens
+
+        # TODO: stop if meeting eos_token_id
+        model_output: GenerateDecoderOnlyOutput = model.generate(
             input_ids.to(model.device),
             use_cache=True,
+            max_new_tokens=max_new_tokens,
+            return_dict_in_generate=True,
+            output_logits=output_logits,  # transformers >= 4.38.2
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
             **generate_kwargs,
         )
 
-        output_str = tokenizer.batch_decode(
-            output_ids,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False,
-        )
-
-        return PolicyOutput(output_ids=output_ids, output_str=output_str)
+        output = PolicyOutput(output_ids=model_output["sequences"])
+        if output_logits:
+            output["logits"] = model_output["logits"]  # tuple(torch.Tensor, )
+        if output_attentions:
+            output["attentions"] = model_output["attentions"]
+        if output_hidden_states:
+            output["hidden_states"] = model_output["hidden_states"]
+        if output_str:  # customized post processing
+            tokenizer = self.tokenizer if tokenizer is None else tokenizer
+            output["output_str"] = tokenizer.batch_decode(
+                model_output["sequences"],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+        return output
 
     def get_model(self):
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
@@ -348,6 +396,18 @@ class HfModelRunnerRayActorGroup:
     def infer(self, *args, **kwargs):
         object_refs = self.infer_async(*args, **kwargs)
         return self.infer_get(object_refs)
+
+    # Generation
+    def generate_async(self, *args, **kwargs):
+        return [actor.generate.remote(*args, **kwargs) for actor in self.ray_actors]
+
+    def generate_get(self, object_refs, timeout=None):
+        outputs = ray.get(object_refs, timeout=timeout)
+        return concat_policy_outputs(outputs)
+
+    def generate(self, *args, **kwargs):
+        object_refs = self.generate_async(*args, **kwargs)
+        return self.generate_get(object_refs)
 
     # Others
     def get_model(self):

@@ -3,7 +3,7 @@ import os
 from torch.nn.modules.loss import _Loss
 from torch.optim.lr_scheduler import _LRScheduler
 
-from typing import Optional, Union
+from typing import Optional, Union, Dict
 from accelerate import Accelerator
 from accelerate.utils import FullyShardedDataParallelPlugin
 from transformers import (
@@ -134,7 +134,7 @@ class HfModelRunner:
     def compute_loss(
         self,
         input_ids: Union[list[torch.Tensor], torch.Tensor],
-        labels: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
+        labels: Optional[Union[list[torch.Tensor], torch.Tensor, Dict[str,torch.Tensor]]] = None,
         attention_mask: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[list[float]] = None,
@@ -177,14 +177,16 @@ class HfModelRunner:
     def compute_loss_one(
         self,
         input_ids: torch.Tensor,
-        labels: Optional[torch.Tensor] = None,
+        labels: Optional[Union[torch.Tensor, Dict[str,torch.Tensor]]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         criterion: Optional[_Loss] = torch.nn.CrossEntropyLoss,
         loss_weight: Optional[float] = None,
         **_ignored,
     ) -> torch.Tensor:
         input_ids = input_ids.to(self.device)
-        labels = input_ids.clone() if labels is None else labels.to(self.device)
+        labels = input_ids.clone() if labels is None else labels
+        if isinstance(labels, torch.Tensor):
+            labels = labels.to(self.device)
         batch = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
@@ -197,13 +199,17 @@ class HfModelRunner:
             loss = fwd_output.loss
         else:
             # Adopted from: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py#L1200
+            del batch["labels"]
             logits: torch.Tensor = self.model(**batch, use_cache=False).logits
             shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels[..., 1:].contiguous()
+            shift_labels = labels
+            if isinstance(labels, torch.Tensor):
+                shift_labels = labels[..., 1:].contiguous()
             loss_fct = criterion()  # default: torch.nn.CrossEntropyLoss()
             shift_logits = shift_logits.view(-1, self.vocab_size)
-            shift_labels = shift_labels.view(-1)
-            shift_labels = shift_labels.to(shift_logits.device)  # Enable model parallel
+            if isinstance(labels, torch.Tensor):
+                shift_labels = shift_labels.view(-1)
+                shift_labels = shift_labels.to(shift_logits.device)  # Enable model parallel
             loss = loss_fct(shift_logits, shift_labels)
 
         if loss_weight is not None:
@@ -223,7 +229,7 @@ class HfModelRunner:
     def train(
         self,
         input_ids: Union[list[torch.Tensor], torch.Tensor],
-        labels: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
+        labels: Optional[Union[list[torch.Tensor], torch.Tensor, Dict[str,torch.Tensor]]] = None,
         attention_mask: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[Union[list[float], float]] = None,

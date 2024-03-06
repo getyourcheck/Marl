@@ -23,7 +23,7 @@ from transformers.generation.utils import GenerateDecoderOnlyOutput
 from ..policy_output import PolicyOutput, logprobs_from_logits
 from ..utils import set_seed
 from ..tokenizer.tokenizer_utils import get_tokenizer
-from .internlm2_reward import (
+from .models.internlm2_reward import (
     InternLM2ForRewardModel,
     InternLM2ForSequenceClassification,
 )

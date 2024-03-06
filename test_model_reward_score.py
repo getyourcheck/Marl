@@ -1,6 +1,7 @@
 # %%
 from marl.coordinator import Coordinator
 from marl.config import Config
+from marl.config_consts import MODEL_TYPE_REWARD, ENGINE_HUGGINGFACE
 
 # INIT METHOD 1
 cluster_address = "auto"
@@ -16,8 +17,8 @@ reward_model = model_dict["reward"]
 # reward_trainer_config = Config(
 #     dict(
 #         model_path="/cpfs01/shared/public/llm_model/ckpt/Luyou_1B/R-Luyou-1B-8k-D20240130-v1-hf/",
-#         model_type="reward",
-#         trainer_type="huggingface",
+#         model_type=MODEL_TYPE_REWARD,
+#         trainer_type=ENGINE_HUGGINGFACE,
 #         parallel=dict(
 #             data=dict(size=1, mode="ddp"),
 #             tensor=dict(size=1, mode="1d"),
@@ -54,6 +55,5 @@ assert score1.logits > score2.logits
 
 scores = reward_model.infer(inputs=[chat_1, chat_2])  # get_scores
 print("scores:", scores.logits)
-
 
 # %%

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- encoding: utf-8 -*-
 
-# adapted from https://github.com/hpcaitech/ColossalAI/blob/main/colossalai/context/config.py
+# Adapted from https://github.com/hpcaitech/ColossalAI/blob/main/colossalai/context/config.py
 
 import inspect
 import sys

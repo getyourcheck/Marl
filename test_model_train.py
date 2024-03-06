@@ -2,12 +2,14 @@
 import torch
 from marl.config import Config
 from marl.tokenizer.tokenizer_utils import get_tokenizer
+from marl.config_consts import ENGINE_HUGGINGFACE
 
 trainer_config = Config(
     dict(
         model_path="internlm/internlm2-chat-1_8b-sft",
         torch_dtype=torch.float16,
-        trainer_type="huggingface",
+        model_type="actor",
+        trainer_type=ENGINE_HUGGINGFACE,
         train_kwargs=dict(
             micro_bsz=1,
             lr=1e-6,

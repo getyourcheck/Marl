@@ -20,10 +20,13 @@ from transformers.modeling_outputs import (
 )
 from transformers.generation.utils import GenerateDecoderOnlyOutput
 
-from ..policy_output import PolicyOutput
+from ..policy_output import PolicyOutput, logprobs_from_logits
 from ..utils import set_seed
 from ..tokenizer.tokenizer_utils import get_tokenizer
-from .internlm2_reward import InternLM2ForRewardModel
+from .internlm2_reward import (
+    InternLM2ForRewardModel,
+    InternLM2ForSequenceClassification,
+)
 from ..config_consts import *
 
 DEFAULT_NEW_TOKENS = 64
@@ -45,15 +48,15 @@ class HfModelRunner:
 
     def initialize(self):
         # 0. Environment
-        envs = self.model_config.get("envs",{})
+        envs = self.model_config.get("envs", {})
         for key, value in envs.items():
             os.environ[key] = value
-        
+
         # 1. Model
         model_path = self.model_config.get("model_path")
         model_type = self.model_config.get("model_type", "").lower()
         torch_dtype = self.model_config.get("torch_dtype", "auto")
-        if model_type == MODEL_TYPE_REWARD or model_type == MODEL_TYPE_CRITIC:
+        if model_type == MODEL_TYPE_REWARD:
             # TODO: support reward model from other classes
             self.model: PreTrainedModel = InternLM2ForRewardModel.from_pretrained(
                 pretrained_model_name_or_path=model_path,
@@ -61,6 +64,16 @@ class HfModelRunner:
                 torch_dtype=torch_dtype,
                 trust_remote_code=True,
                 attn_implementation="flash_attention_2",
+            )
+        elif model_type == MODEL_TYPE_CRITIC:
+            self.model: PreTrainedModel = (
+                InternLM2ForSequenceClassification.from_pretrained(
+                    pretrained_model_name_or_path=model_path,
+                    device_map="auto",
+                    torch_dtype=torch_dtype,
+                    trust_remote_code=True,
+                    attn_implementation="flash_attention_2",
+                )
             )
         else:
             self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
@@ -180,7 +193,8 @@ class HfModelRunner:
         self.model.train()
 
         if criterion is None:
-            loss = self.model(**batch, use_cache=False).loss
+            fwd_output = self.model(**batch, use_cache=False)
+            loss = fwd_output.loss
         else:
             # Adopted from: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py#L1200
             logits: torch.Tensor = self.model(**batch, use_cache=False).logits
@@ -231,6 +245,7 @@ class HfModelRunner:
         batch_size: Optional[int] = -1,
         tokenizer=None,  # reward model may use tokenizer in inference
         attention_mask=None,
+        output_logprobs=False,
         output_logits=True,
         output_attentions=False,
         output_hidden_states=False,
@@ -238,7 +253,7 @@ class HfModelRunner:
         **_ignored,
     ) -> PolicyOutput:
         model_type = self.model_config.get("model_type", "").lower()
-        if model_type == MODEL_TYPE_REWARD or model_type == MODEL_TYPE_CRITIC:
+        if model_type == MODEL_TYPE_REWARD:
             if isinstance(inputs, torch.Tensor):
                 input_ids = inputs
                 print(f"[{self.__class__.__name__}] self.reward_model.forward(ids)")
@@ -289,6 +304,10 @@ class HfModelRunner:
             else:
                 raise NotImplementedError
 
+        # TODO
+        # elif model_type == MODEL_TYPE_CRITIC:
+        #     print(f"[{self.__class__.__name__}] self.critic_model.forward(ids)")
+
         # model_type == "actor", "reference", ...
         print(f"[{self.__class__.__name__}] self.infer() kwargs: {infer_kwargs}")
         assert isinstance(inputs, torch.Tensor)
@@ -307,6 +326,10 @@ class HfModelRunner:
             output["attentions"] = model_output["attentions"]
         if output_hidden_states:
             output["hidden_states"] = model_output["hidden_states"]
+        if output_logprobs:
+            output["logprobs"] = logprobs_from_logits(
+                logits=output["logits"][:, :-1, :], labels=input_ids[:, 1:], gather=True
+            )
         return output
 
     # Generate

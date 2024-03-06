@@ -6,22 +6,22 @@ from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer
 
 # %%
 # 1. load a pretrained model
-# MODEL_NAME="internlm/internlm2-7b"
-MODEL_NAME="facebook/opt-1.3b"
-model = AutoModelForCausalLMWithValueHead.from_pretrained(MODEL_NAME, torch_dtype=torch.float16, trust_remote_code=True).cuda()
-model_ref = AutoModelForCausalLMWithValueHead.from_pretrained(MODEL_NAME, torch_dtype=torch.float16, trust_remote_code=True).cuda()
+# MODEL_PATH="internlm/internlm2-7b"
+MODEL_PATH="facebook/opt-1.3b"
+model = AutoModelForCausalLMWithValueHead.from_pretrained(MODEL_PATH, torch_dtype=torch.float16, trust_remote_code=True).cuda()
+model_ref = AutoModelForCausalLMWithValueHead.from_pretrained(MODEL_PATH, torch_dtype=torch.float16, trust_remote_code=True).cuda()
 model_ref = model_ref.eval()
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
 tokenizer.pad_token = tokenizer.eos_token
 
 # %%
 # 2. initialize trainer
-ppo_config = {"batch_size": 1}
+ppo_config = {"batch_size": 2, "mini_batch_size": 2}
 config = PPOConfig(**ppo_config)
 ppo_trainer = PPOTrainer(config, model, model_ref, tokenizer)
 
 # 3. encode a query
-query_txt = "This morning I went to the "
+query_txt = ["This morning I went to the ", "A list of colors: red, blue"]
 query_tensor = tokenizer.encode(query_txt, return_tensors="pt").to(model.pretrained_model.device)
 
 # 4. generate model response
@@ -32,8 +32,9 @@ generation_kwargs = {
     "do_sample": True,
     "pad_token_id": tokenizer.eos_token_id,
     "max_new_tokens": 20,
+    "generate_ref_response": True,
 }
-response_tensor = ppo_trainer.generate([item for item in query_tensor], return_prompt=False, **generation_kwargs)
+response_tensor, ref_response = ppo_trainer.generate([item for item in query_tensor], return_prompt=False, **generation_kwargs)
 response_txt = tokenizer.decode(response_tensor[0])
 
 # 5. define a reward for response

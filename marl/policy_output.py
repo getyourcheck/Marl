@@ -4,6 +4,7 @@ import torch
 from dataclasses import dataclass
 from transformers.utils.generic import ModelOutput
 
+
 @dataclass
 class PolicyOutput(ModelOutput):
     output_ids: Optional[torch.Tensor] = None
@@ -27,7 +28,7 @@ class PolicyOutput(ModelOutput):
             if isinstance(v, torch.Tensor):
                 if not torch.equal(v, vother):
                     return False
-            elif isinstance(v, tuple): # tuple(torch.Tensor)
+            elif isinstance(v, tuple):  # tuple(torch.Tensor)
                 for i, j in zip(v, vother):
                     if isinstance(i, torch.Tensor):
                         if not torch.equal(i, j):
@@ -60,3 +61,24 @@ def concat_policy_outputs(inputs: list[PolicyOutput]) -> PolicyOutput:
         else:
             raise TypeError(f"value: {value} with unsupported type: {type(value)}.")
     return concated
+
+
+def logprobs_from_logits(
+    logits: torch.Tensor, labels: torch.Tensor = None, gather: bool = True
+) -> torch.Tensor:
+    r"""
+    Adapted from: https://github.com/huggingface/trl/blob/main/trl/core.py#L95
+
+    Example:
+
+    ```python
+    >>> logits, _, values = model(**input_kwargs)
+    >>> input_ids = input_kwargs["input_ids"]
+    >>> logprobs = logprobs_from_logits(logits[:, :-1, :], input_ids[:, 1:])
+    ```"""
+
+    logp = torch.nn.functional.log_softmax(logits, dim=2)
+    if not gather or labels is None:
+        return logp
+    logpy = torch.gather(logp, 2, labels.unsqueeze(2)).squeeze(-1)
+    return logpy

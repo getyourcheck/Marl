@@ -240,28 +240,12 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
             return sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
 
 
-class InternLM2ForSequenceClassification(InternLM2PreTrainedModel):
-    """
-    The InternLM2 Model transformer with a sequence classification head on top (linear layer).
-
-    [`InternLM2ForSequenceClassification`] uses the last token in order to do the classification,
-    as other causal models (e.g. GPT-2) do.
-
-    Since it does classification on the last token, it requires to know the position of the last token. If a
-    `pad_token_id` is defined in the configuration, it finds the last token that is not a padding token in each row. If
-    no `pad_token_id` is defined, it simply takes the last value in each row of the batch. Since it cannot guess the
-    padding tokens when `inputs_embeds` are passed instead of `input_ids`, it does the same (take the last value in
-    each row of the batch).
-    """,
-
+class InternLM2ForCriticModel(InternLM2PreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
-        self.num_labels = config.num_labels
         self.model = InternLM2Model(config)
-        self.score = nn.Linear(config.hidden_size, self.num_labels, bias=False)
-
-        # Initialize weights and apply final processing
-        self.post_init()
+        self.v_head = nn.Linear(config.hidden_size, 1, bias=False)
+        self.post_init()  # Initialize weights and apply final processing
 
     def get_input_embeddings(self):
         return self.model.tok_embeddings
@@ -282,18 +266,10 @@ class InternLM2ForSequenceClassification(InternLM2PreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ) -> Union[tuple, SequenceClassifierOutputWithPast]:
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
-        """
-        return_dict = (
-            return_dict if return_dict is not None else self.config.use_return_dict
-        )
 
+        # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         transformer_outputs = self.model(
-            input_ids,
+            input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
             past_key_values=past_key_values,
@@ -303,8 +279,10 @@ class InternLM2ForSequenceClassification(InternLM2PreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
         )
+
         hidden_states = transformer_outputs[0]
-        logits = self.score(hidden_states)
+        logits = self.v_head(hidden_states).squeeze(-1)
+
 
         if input_ids is not None:
             batch_size = input_ids.shape[0]
@@ -312,22 +290,18 @@ class InternLM2ForSequenceClassification(InternLM2PreTrainedModel):
             batch_size = inputs_embeds.shape[0]
 
         if self.config.pad_token_id is None and batch_size != 1:
-            raise ValueError(
-                "Cannot handle batch sizes > 1 if no padding token is defined."
-            )
+            raise ValueError("Cannot handle batch sizes > 1 if no padding token is defined.")
         if self.config.pad_token_id is None:
             sequence_lengths = -1
         else:
             if input_ids is not None:
-                sequence_lengths = (
-                    torch.eq(input_ids, self.config.pad_token_id).int().argmax(-1) - 1
-                ).to(logits.device)
+                sequence_lengths = (torch.eq(input_ids, self.config.pad_token_id).int().argmax(-1) - 1).to(
+                    logits.device
+                )
             else:
                 sequence_lengths = -1
 
-        pooled_logits = logits[
-            torch.arange(batch_size, device=logits.device), sequence_lengths
-        ]
+        pooled_logits = logits # [torch.arange(batch_size, device=logits.device), sequence_lengths]
 
         loss = None
         if labels is not None:
@@ -335,9 +309,7 @@ class InternLM2ForSequenceClassification(InternLM2PreTrainedModel):
             if self.config.problem_type is None:
                 if self.num_labels == 1:
                     self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (
-                    labels.dtype == torch.long or labels.dtype == torch.int
-                ):
+                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
                     self.config.problem_type = "single_label_classification"
                 else:
                     self.config.problem_type = "multi_label_classification"
@@ -350,9 +322,7 @@ class InternLM2ForSequenceClassification(InternLM2PreTrainedModel):
                     loss = loss_fct(pooled_logits, labels)
             elif self.config.problem_type == "single_label_classification":
                 loss_fct = torch.nn.CrossEntropyLoss()
-                loss = loss_fct(
-                    pooled_logits.view(-1, self.num_labels), labels.view(-1)
-                )
+                loss = loss_fct(pooled_logits.view(-1, self.num_labels), labels.view(-1))
             elif self.config.problem_type == "multi_label_classification":
                 loss_fct = torch.nn.BCEWithLogitsLoss()
                 loss = loss_fct(pooled_logits, labels)

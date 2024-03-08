@@ -3,7 +3,7 @@ import os
 from torch.nn.modules.loss import _Loss
 from torch.optim.lr_scheduler import _LRScheduler
 
-from typing import Optional, Union, Dict
+from typing import Optional, Union
 from accelerate import Accelerator
 from accelerate.utils import FullyShardedDataParallelPlugin
 from transformers import (
@@ -25,7 +25,7 @@ from ..utils import set_seed
 from ..tokenizer.tokenizer_utils import get_tokenizer
 from .models.internlm2_reward import (
     InternLM2ForRewardModel,
-    InternLM2ForSequenceClassification,
+    InternLM2ForCriticModel,
 )
 from ..config_consts import *
 
@@ -66,14 +66,12 @@ class HfModelRunner:
                 attn_implementation="flash_attention_2",
             )
         elif model_type == MODEL_TYPE_CRITIC:
-            self.model: PreTrainedModel = (
-                InternLM2ForSequenceClassification.from_pretrained(
-                    pretrained_model_name_or_path=model_path,
-                    device_map="auto",
-                    torch_dtype=torch_dtype,
-                    trust_remote_code=True,
-                    attn_implementation="flash_attention_2",
-                )
+            self.model: PreTrainedModel = InternLM2ForCriticModel.from_pretrained(
+                pretrained_model_name_or_path=model_path,
+                device_map="auto",
+                torch_dtype=torch_dtype,
+                trust_remote_code=True,
+                attn_implementation="flash_attention_2",
             )
         else:
             self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
@@ -134,7 +132,9 @@ class HfModelRunner:
     def compute_loss(
         self,
         input_ids: Union[list[torch.Tensor], torch.Tensor],
-        labels: Optional[Union[list[torch.Tensor], torch.Tensor, Dict[str,torch.Tensor]]] = None,
+        labels: Optional[
+            Union[list[torch.Tensor], torch.Tensor, dict[str, torch.Tensor]]
+        ] = None,
         attention_mask: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[list[float]] = None,
@@ -143,11 +143,13 @@ class HfModelRunner:
         """
         criterion: _Loss class, e.g., torch.nn.CrossEntropyLoss()
         """
-        if type(input_ids) == list:  # multiple inputs grouped to compute loss
+        if isinstance(input_ids, torch.Tensor):
+            print(f"[{self.__class__.__name__}] self.compute_loss() for 1 input batch")
+            loss = self.compute_loss_one(input_ids, labels, attention_mask, criterion)
+            return loss
+        elif type(input_ids) == list:  # multiple inputs grouped to compute loss
             # https://stackoverflow.com/questions/53994625/how-can-i-process-multi-loss-in-pytorch
-            print(
-                f"[{self.__class__.__name__}] self.compute_loss() for multiple input batches"
-            )
+            print(f"[{self.__class__.__name__}] self.compute_loss() for  input batches")
             assert (
                 len(input_ids)
                 == len(labels)
@@ -156,9 +158,7 @@ class HfModelRunner:
                 == len(loss_weights)
             ), f"{len(input_ids)} {len(labels)} {len(criterion)} {len(attention_mask)} {len(loss_weights)} must equal"
             loss_cache = [0 for _ in range(len(input_ids))]
-            loss_weights = [
-                x / float(len(loss_weights)) for x in loss_weights
-            ]  # normalized to 1
+            loss_weights = [x / float(len(loss_weights)) for x in loss_weights]  # to 1
 
             for i in range(len(input_ids)):
                 loss = self.compute_loss_one(
@@ -168,49 +168,52 @@ class HfModelRunner:
             loss_sum = sum(loss_cache)
             return loss_sum
         else:
-            print(
-                f"[{self.__class__.__name__}] self.compute_loss() for single input batch"
-            )
-            loss = self.compute_loss_one(input_ids, labels, attention_mask, criterion)
-            return loss
+            raise NotImplementedError
 
     def compute_loss_one(
         self,
         input_ids: torch.Tensor,
-        labels: Optional[Union[torch.Tensor, Dict[str,torch.Tensor]]] = None,
+        labels: Optional[Union[torch.Tensor, dict[str, torch.Tensor]]] = None,
         attention_mask: Optional[torch.Tensor] = None,
-        criterion: Optional[_Loss] = torch.nn.CrossEntropyLoss,
+        criterion: Optional[_Loss] = None,
         loss_weight: Optional[float] = None,
         **_ignored,
     ) -> torch.Tensor:
+
         input_ids = input_ids.to(self.device)
         labels = input_ids.clone() if labels is None else labels
-        if isinstance(labels, torch.Tensor):
-            labels = labels.to(self.device)
         batch = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
-            "labels": labels,
         }
         self.model.train()
 
         if criterion is None:
+            # OPT. A) Default settings
+            assert isinstance(
+                labels, torch.Tensor
+            ), "Please pass in `criterion` for non-tensor labels"
+            batch["labels"] = labels.to(self.device)
             fwd_output = self.model(**batch, use_cache=False)
             loss = fwd_output.loss
-        else:
-            # Adopted from: https://github.com/huggingface/transformers/blob/main/src/transformers/models/llama/modeling_llama.py#L1200
-            del batch["labels"]
+        elif isinstance(labels, torch.Tensor):
+            # OPT. B) Use preset loss functions, e.g., torch.nn.CrossEntropyLoss()
+            # Adopted from: https://github.com/huggingface/transformers/blob/v4.38.2/src/transformers/models/llama/modeling_llama.py#L1199
             logits: torch.Tensor = self.model(**batch, use_cache=False).logits
             shift_logits = logits[..., :-1, :].contiguous()
-            shift_labels = labels
-            if isinstance(labels, torch.Tensor):
-                shift_labels = labels[..., 1:].contiguous()
-            loss_fct = criterion()  # default: torch.nn.CrossEntropyLoss()
+            shift_labels = labels[..., 1:].contiguous()
             shift_logits = shift_logits.view(-1, self.vocab_size)
-            if isinstance(labels, torch.Tensor):
-                shift_labels = shift_labels.view(-1)
-                shift_labels = shift_labels.to(shift_logits.device)  # Enable model parallel
+            shift_labels = shift_labels.view(-1)
+            shift_labels = shift_labels.to(shift_logits.device)  # enable model para
+            loss_fct = criterion()
             loss = loss_fct(shift_logits, shift_labels)
+        elif isinstance(labels, dict):
+            # OPT. C) Use customized loss function, see loss/actor_loss.py            
+            logits: torch.Tensor = self.model(**batch, use_cache=False, return_dict=True).logits
+            loss_fct = criterion()
+            loss = loss_fct(logits, labels)
+        else:
+            raise ValueError(f"labels of unsupported type: {type(labels)}")
 
         if loss_weight is not None:
             loss *= loss_weight
@@ -229,7 +232,9 @@ class HfModelRunner:
     def train(
         self,
         input_ids: Union[list[torch.Tensor], torch.Tensor],
-        labels: Optional[Union[list[torch.Tensor], torch.Tensor, Dict[str,torch.Tensor]]] = None,
+        labels: Optional[
+            Union[list[torch.Tensor], torch.Tensor, dict[str, torch.Tensor]]
+        ] = None,
         attention_mask: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[Union[list[float], float]] = None,
@@ -244,7 +249,7 @@ class HfModelRunner:
         return loss
 
     # Inference
-    @torch.inference_mode()
+    @torch.no_grad()
     def infer(
         self,
         inputs: Union[torch.Tensor, list[dict], list[list[dict]]],
@@ -259,7 +264,10 @@ class HfModelRunner:
         **_ignored,
     ) -> PolicyOutput:
         model_type = self.model_config.get("model_type", "").lower()
+
+        # OPT. A) Reward Model
         if model_type == MODEL_TYPE_REWARD:
+            self.model: InternLM2ForRewardModel = self.model
             if isinstance(inputs, torch.Tensor):
                 input_ids = inputs
                 print(f"[{self.__class__.__name__}] self.reward_model.forward(ids)")
@@ -310,11 +318,29 @@ class HfModelRunner:
             else:
                 raise NotImplementedError
 
-        # TODO
-        # elif model_type == MODEL_TYPE_CRITIC:
-        #     print(f"[{self.__class__.__name__}] self.critic_model.forward(ids)")
+        # OPT. B) Critic Model
+        elif model_type == MODEL_TYPE_CRITIC:
+            print(f"[{self.__class__.__name__}] self.critic_model.forward(str)")
+            input_ids: torch.Tensor = self.tokenize_str_input(inputs=inputs)
+            input_ids.to(self.device)
+            model_output: SequenceClassifierOutputWithPast = self.model(
+                input_ids,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                attention_mask=attention_mask,
+                return_dict=True,
+                **infer_kwargs,
+            )
+            output = PolicyOutput()
+            if output_logits:
+                output["logits"] = model_output["logits"]
+            if output_attentions:
+                output["attentions"] = model_output["attentions"]
+            if output_hidden_states:
+                output["hidden_states"] = model_output["hidden_states"]
+            return output
 
-        # model_type == "actor", "reference", ...
+        # OPT. C) model_type == "actor", "reference", ...
         print(f"[{self.__class__.__name__}] self.infer() kwargs: {infer_kwargs}")
         assert isinstance(inputs, torch.Tensor)
         input_ids: torch.Tensor = inputs.to(self.device)
@@ -339,7 +365,7 @@ class HfModelRunner:
         return output
 
     # Generate
-    @torch.inference_mode()
+    @torch.no_grad()
     def generate(
         self,
         inputs: Union[torch.Tensor, str, list[str]],
@@ -347,7 +373,7 @@ class HfModelRunner:
         tokenizer=None,
         attention_mask=None,
         step=-1,
-        output_str=False,
+        output_str=True,
         output_logits=False,
         output_attentions=False,
         output_hidden_states=False,
@@ -411,7 +437,7 @@ class HfModelRunner:
         if isinstance(inputs, torch.Tensor):
             return inputs
         elif isinstance(inputs, str):
-            input_strs = list(inputs)
+            input_strs = inputs
         elif isinstance(inputs, list):
             topping = inputs[0]
             if isinstance(topping, torch.Tensor):
@@ -422,7 +448,7 @@ class HfModelRunner:
             input_strs = inputs
 
         print(f"[{self.__class__.__name__}] encode string input into input_ids ...")
-        output = self.tokenizer(input_strs, return_tensors="pt")
+        output = self.tokenizer(input_strs, return_tensors="pt", padding=True)
         return output.input_ids
 
 

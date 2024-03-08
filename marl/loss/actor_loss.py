@@ -1,9 +1,8 @@
 import torch
-from typing import Any, Dict, Tuple
-import torch.nn.functional as F
+from typing import Any
 
 def gather_log_probs(logits, labels):
-    log_probs = F.log_softmax(logits, dim=-1)
+    log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
     log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1))
     return log_probs_labels.squeeze(-1)
 
@@ -35,7 +34,7 @@ class ActorLoss(torch.nn.Module):
             raise RuntimeError(f"ActorLoss.loss_type must be ['per_seq', 'per_token'], got {self.loss_type}")
         return pg_loss
 
-    def forward(self, logits: torch.Tensor, *labels: Tuple[Dict[str, Any]]):
+    def forward(self, logits: torch.Tensor, *labels: tuple[dict[str, Any]]):
         """Forward function of ActorLoss.
 
         Args:
@@ -43,7 +42,7 @@ class ActorLoss(torch.nn.Module):
                 For packed forward: (micro_bsz * seqlen, 1), where micro_bsz = 1
                 For non packed forward: (micro_bsz, seqlen, 1)
 
-            labels (Tuple[dict]): Label values which are split by pipeline
+            labels (tuple[dict]): Label values which are split by pipeline
                 schedule into pieces. The length of the list is micro_bsz. Each
                 element is a dict, representing labels to a batch.
 
@@ -58,7 +57,8 @@ class ActorLoss(torch.nn.Module):
         """
         assert logits.ndim == 2 or logits.ndim == 3
         micro_bsz = len(labels)
-        if logits.ndim == 2:
+        # logits = gather_output(logits)  # TODO: handle tp.
+        if logits.ndim == 2:  # (seqlen, vocab_size)
             logits = logits.reshape(micro_bsz, -1, logits.shape[-1])  # (micro_bsz, seqlen, vocab_size)
         assert logits.shape[0] == len(labels)
         input_ids = torch.vstack([label["input_ids"] for label in labels])  # (micro_bsz, seqlen)
@@ -66,7 +66,7 @@ class ActorLoss(torch.nn.Module):
         advantages = torch.vstack([label["advantages"] for label in labels])  # (micro_bsz, seqlen - promptlen)
         mask = torch.vstack([label["mask"] for label in labels])  # (micro_bsz, seqlen - 1)
         loss_factor = labels[0]["loss_factor"]
-        logprobs = gather_log_probs(logits[:, :, :], input_ids[:, 1:].long())  # (micro_bsz, seqlen - 1)
+        logprobs = gather_log_probs(logits[:, :-1, :], input_ids[:, 1:].long())  # (micro_bsz, seqlen - 1)
 
         loss = self.actor_loss_fn(
             logprobs=logprobs,

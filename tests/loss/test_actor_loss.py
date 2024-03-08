@@ -3,6 +3,7 @@ from marl.config import Config
 from marl.config_consts import ENGINE_HUGGINGFACE
 from marl.model_backend.hf_model_runner import HfModelRunner
 from marl.loss.actor_loss import ActorLoss
+from marl.loss.pretrain_loss import PretrainLoss
 
 def test_actor_loss():
     trainer_config = Config(
@@ -53,4 +54,20 @@ def test_actor_loss():
     )
     loss = mr.train(input_ids, labels, criterion=ActorLoss, step_interval=999).item()
     assert loss == -104.09062194824219
-
+    pretrain_input_ids = torch.tensor([[ 611, 18963,  1893, 15065,  3126,   491, 10850,   454, 56025, 19603,
+           756,   918,  6690,   435, 28260,  5992,  1556,   668,   517,   937,
+          2308,   281, 18590,   518,   451, 21239,  8726,   454,  8917,   313,
+          7175, 34209,   569]]).cuda()
+    pretrain_labels = torch.tensor([[ 18963,  1893, 15065,  3126,   491, 10850,   454, 56025, 19603,
+           756,   918,  6690,   435, 28260,  5992,  1556,   668,   517,   937,
+          2308,   281, 18590,   518,   451, 21239,  8726,   454,  8917,   313,
+          7175, 34209,   569,   2792]]).cuda()
+    loss = mr.train(
+        input_ids = [input_ids, pretrain_input_ids], 
+        labels = [labels, pretrain_labels], 
+        criterion=[ActorLoss, PretrainLoss], 
+        attention_mask = [None,None],
+        loss_weights =[1,1],
+        step_interval=999
+    ).item()
+    assert loss == -45.71440124511719

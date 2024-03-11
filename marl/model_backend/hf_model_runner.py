@@ -210,8 +210,10 @@ class HfModelRunner:
         elif isinstance(labels, dict):
             # OPT. C) Use customized loss function, see loss/actor_loss.py            
             logits: torch.Tensor = self.model(**batch, use_cache=False, return_dict=True).logits
-            loss_fct = criterion()
-            loss = loss_fct(logits, labels)
+            # loss_fct = criterion()
+            for k, v in labels.items():
+                labels[k] = v.to(self.device)
+            loss = criterion(logits, labels)
         else:
             raise ValueError(f"labels of unsupported type: {type(labels)}")
 

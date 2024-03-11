@@ -61,6 +61,7 @@ class CriticLoss(torch.nn.Module):
         returns = labels[0]["returns"][:, :-1]  # (micro_bsz, seqlen - promptlen)
         mask = labels[0]["mask"][:, :-1]  # (micro_bsz, seqlen - 1)
         loss_factor = labels[0]["loss_factor"]
+        print(values.shape, old_values.shape, returns.shape, mask.shape)
         loss = self.critic_loss_fn(
             values=values,
             old_values=old_values,

@@ -11,7 +11,9 @@ from .base import MultiSourceDatset, InfiniteDataset
 
 @dataclass
 class Sequence:
+    token_ids_padding: List[int]
     token_ids: List[int]
+    question_mask: List[int]
     prompt: str = None
     group: str = None
     idx: str = None
@@ -105,15 +107,20 @@ class TxtSequenceDataset(IterableDataset):
 
         assert len(tokens) <= self.max_seq_len, "{}-{}".format(len(tokens), self.max_seq_len)
         if len(tokens) > self.max_seq_len:
+            # TODO truncation
             raise RuntimeError(f"token_ids is too long: {len(tokens)}")
         token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
         # pos_ids = list(range(len(token_ids)))
-        token_ids = self._padding_data(torch.tensor(token_ids))
+        token_ids_padding = self._padding_data(torch.tensor(token_ids))
+        question_mask = [1] * len(token_ids)
+        question_mask += [0] * (self.max_seq_len - len(token_ids))
         
         return Sequence(group=example["group"],
                         idx=example["id"],
                         prompt=question + answer,
-                        token_ids=token_ids,
+                        token_ids=np.array(token_ids),
+                        token_ids_padding=np.array(token_ids_padding),
+                        question_mask=np.array(question_mask)
                         )
 
     def _padding_data(self, data):

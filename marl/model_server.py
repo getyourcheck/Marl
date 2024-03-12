@@ -6,6 +6,7 @@ from .model_backend import HfModelRunnerRayActorGroup
 from .tokenizer.tokenizer_utils import get_tokenizer
 from .config_consts import *
 
+
 class ModelServer:
     # Initialize
     def __init__(self, model_name: str, model_config: dict):

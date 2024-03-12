@@ -1,6 +1,8 @@
 # keywords for config files
 
 # model type (actor, critic, reward, reference, ...) for `model_type`
+MODEL_TYPE_ACTOR: str = "actor"
+MODEL_TYPE_REFERENCE: str = "reference"
 MODEL_TYPE_REWARD: str = "reward"
 MODEL_TYPE_CRITIC: str = "critic"
 

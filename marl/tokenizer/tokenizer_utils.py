@@ -10,7 +10,7 @@ from marl.logger import init_logger
 
 logger = init_logger(__name__)
 
-PADDING_SIDE = ""  # TODO
+PADDING_SIDE = "left"  # TODO
 
 
 def get_tokenizer(
@@ -18,6 +18,7 @@ def get_tokenizer(
     *args,
     trust_remote_code: bool = False,
     tokenizer_revision: Optional[str] = None,
+    padding_side: Optional[str] = PADDING_SIDE,
     **kwargs,
 ) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
     """Gets a tokenizer for the given model name via Huggingface."""
@@ -28,6 +29,7 @@ def get_tokenizer(
             *args,
             trust_remote_code=trust_remote_code,
             tokenizer_revision=tokenizer_revision,
+            padding_side=padding_side,
             **kwargs,
         )
     except ValueError as e:
@@ -48,6 +50,7 @@ def get_tokenizer(
                 *args,
                 trust_remote_code=trust_remote_code,
                 tokenizer_revision=tokenizer_revision,
+                padding_side=padding_side,
                 **kwargs,
             )
             logger.warning("Using LlamaTokenizer.")

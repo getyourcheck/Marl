@@ -16,6 +16,8 @@ class PolicyOutput(ModelOutput):
     logits_entropy: Optional[torch.Tensor] = None
     logprobs: Optional[torch.Tensor] = None
     top_logprobs: Optional[torch.Tensor] = None
+    question_mask: Optional[torch.Tensor] = None
+    answer_mask: Optional[torch.Tensor] = None
 
     def __eq__(self, other: ModelOutput):
         if len(self.keys()) != len(other.keys()):
@@ -40,7 +42,11 @@ class PolicyOutput(ModelOutput):
                 if v != vother:
                     return False
         return True
-
+    
+    def to(self, device):
+        for _, v in self.items():
+            if isinstance(v, torch.Tensor):
+                v.to(device)
 
 def concat_policy_outputs(inputs: list[PolicyOutput]) -> PolicyOutput:
     if inputs == None or len(inputs) == 0:

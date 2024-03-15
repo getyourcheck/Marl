@@ -28,6 +28,7 @@ from .models.internlm2_reward import (
     InternLM2ForCriticModel,
 )
 from ..config_consts import *
+from .generate_utils import get_question_answer_mask
 
 DEFAULT_NEW_TOKENS = 64
 MAXIMUM_NEW_TOKENS = 1024
@@ -208,8 +209,10 @@ class HfModelRunner:
             loss_fct = criterion()
             loss = loss_fct(shift_logits, shift_labels)
         elif isinstance(labels, dict):
-            # OPT. C) Use customized loss function, see loss/actor_loss.py            
-            logits: torch.Tensor = self.model(**batch, use_cache=False, return_dict=True).logits
+            # OPT. C) Use customized loss function, see loss/actor_loss.py
+            logits: torch.Tensor = self.model(
+                **batch, use_cache=False, return_dict=True
+            ).logits
             # loss_fct = criterion()
             for k, v in labels.items():
                 labels[k] = v.to(self.device)
@@ -384,7 +387,9 @@ class HfModelRunner:
         **_ignored,
     ) -> PolicyOutput:
         print(f"[{self.__class__.__name__}] self.generate() kwargs: {generate_kwargs}")
-        input_ids: torch.Tensor = self.tokenize_str_input(inputs=inputs, chat_template=chat_template)
+        input_ids: torch.Tensor = self.tokenize_str_input(
+            inputs=inputs, chat_template=chat_template
+        )
         assert isinstance(input_ids, torch.Tensor)
 
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
@@ -411,7 +416,8 @@ class HfModelRunner:
             **generate_kwargs,
         )
 
-        output = PolicyOutput(output_ids=model_output["sequences"])
+        output_ids = model_output["sequences"]
+        output = PolicyOutput(output_ids=output_ids)
         if output_logits:
             output["logits"] = model_output["logits"]  # tuple(torch.Tensor, )
         if output_attentions:
@@ -421,27 +427,17 @@ class HfModelRunner:
         if output_str:  # customized post processing
             tokenizer = self.tokenizer if tokenizer is None else tokenizer
             output["output_str"] = tokenizer.batch_decode(
-                model_output["sequences"],
+                output_ids,
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False,
             )
-        question_mask = torch.ones(input_ids.shape, dtype=int)
-        question_mask[input_ids == tokenizer.pad_token_id] = 0
-        question_mask = torch.nn.functional.pad(
-            question_mask, 
-            (0, model_output["sequences"].shape[-1] - input_ids.shape[-1]), 
-            'constant', 
-            0,
+        output["question_mask"], output["answer_mask"] = get_question_answer_mask(
+            input_ids,
+            output_ids,
+            tokenizer_pad_token_id=tokenizer.pad_token_id,
+            generate_pad_token_id=generate_kwargs.get("pad_token_id"),
         )
-        output["question_mask"] = question_mask
-        answer_mask = torch.zeros(model_output["sequences"].shape, dtype=int)
-        answer_mask[:,input_ids.shape[-1]:] = 1
-        for index, mask in enumerate(answer_mask):
-            positions = torch.nonzero(model_output["sequences"][index] == generate_kwargs["eos_token_id"])
-            if len(positions) > 0:
-                mask[max(positions) + 1:] = 0
-        output["answer_mask"] = answer_mask
-        output.to('cpu')
+        output.to("cpu")
         return output
 
     def get_model(self):
@@ -453,7 +449,7 @@ class HfModelRunner:
         set_seed(seed)
 
     def tokenize_str_input(
-        self, 
+        self,
         inputs: Union[list[str], str],
         chat_template: str = None,
     ) -> torch.Tensor:
@@ -461,7 +457,12 @@ class HfModelRunner:
             return inputs
         elif isinstance(inputs, str):
             if chat_template != None:
-                inputs = self.tokenizer.apply_chat_template([{"role": "user", "content": inputs}], tokenize=False, chat_template = chat_template, add_generation_prompt=True)
+                inputs = self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": inputs}],
+                    tokenize=False,
+                    chat_template=chat_template,
+                    add_generation_prompt=True,
+                )
             input_strs = inputs
         elif isinstance(inputs, list):
             topping = inputs[0]
@@ -472,7 +473,12 @@ class HfModelRunner:
                 raise TypeError(f"Unsupported type: type({topping}) inputs({inputs})")
             if chat_template != None:
                 inputs = [
-                    self.tokenizer.apply_chat_template([{"role": "user", "content": input}], tokenize=False, chat_template = chat_template, add_generation_prompt=True) 
+                    self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": input}],
+                        tokenize=False,
+                        chat_template=chat_template,
+                        add_generation_prompt=True,
+                    )
                     for input in inputs
                 ]
             input_strs = inputs

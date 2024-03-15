@@ -146,44 +146,44 @@ def test_generate():
 
     # check question_mask
     assert torch.equal(
-        question_mask[0][:6], torch.zeros(6, dtype=int)
+        question_mask[0][:6], torch.zeros(6, dtype=int, device=question_mask.device)
     ), f"expected: {torch.zeros(6,dtype=int)}\noutput: {question_mask[0][:6]}"  # padding
     assert torch.equal(
         question_mask[0][6 : question_len],
-        torch.ones(question_len - 6, dtype=int),
+        torch.ones(question_len - 6, dtype=int, device=question_mask.device),
     ), f"expected: {torch.ones(question_len - 6, dtype=int)}\noutput: {question_mask[0][6 : question_len]}"  # question
     assert torch.equal(
         question_mask[0][question_len :],
-        torch.zeros(output_len - question_len, dtype=int),
+        torch.zeros(output_len - question_len, dtype=int, device=question_mask.device),
     ), f"expected: {torch.zeros(output_len - question_len, dtype=int)}\noutput: {question_mask[0][question_len :]}"  # answer
 
     assert torch.equal(
         question_mask[1][: question_len],
-        torch.ones(question_len, dtype=int),
+        torch.ones(question_len, dtype=int, device=question_mask.device),
     ), f"expected: {torch.ones(question_len, dtype=int)}\noutput: {question_mask[1][: question_len]}"  # question
     assert torch.equal(
         question_mask[1][question_len :],
-        torch.zeros(output_len - question_len, dtype=int),
+        torch.zeros(output_len - question_len, dtype=int, device=question_mask.device),
     ), f"expected: {torch.zeros(output_len - question_len, dtype=int)}\noutput: {question_mask[1][question_len :]}"  # answer
 
     # check answer_mask
     assert torch.equal(
         answer_mask[0][: question_len],
-        torch.zeros(question_len, dtype=int),
+        torch.zeros(question_len, dtype=int, device=answer_mask.device),
     ), f"expected: {torch.zeros(question_len, dtype=int)}\noutput: {answer_mask[0][: question_len]}"  # question
     assert torch.equal(
         answer_mask[0][question_len : question_len + answer_1_len],
-        torch.ones(answer_1_len, dtype=int),
+        torch.ones(answer_1_len, dtype=int, device=answer_mask.device),
     ), f"expected: {torch.ones(answer_1_len, dtype=int)}\noutput: {answer_mask[0][question_len : question_len + answer_1_len]}"  # answer
     assert torch.equal(
-        answer_mask[0][question_len + answer_1_len:], torch.zeros(output_len - question_len - answer_1_len, dtype=int)
+        answer_mask[0][question_len + answer_1_len:], torch.zeros(output_len - question_len - answer_1_len, dtype=int, device=answer_mask.device)
     ), f"expected: { torch.zeros(output_len - question_len - answer_1_len, dtype=int)}\noutput: {answer_mask[0][question_len + answer_1_len:]}"  # padding
 
     assert torch.equal(
         answer_mask[1][: question_len],
-        torch.zeros(question_len, dtype=int),
+        torch.zeros(question_len, dtype=int, device=answer_mask.device),
     ), f"expected: {torch.zeros(question_len, dtype=int)}\noutput: {answer_mask[1][: question_len]}"  # question
     assert torch.equal(
         answer_mask[1][question_len :],
-        torch.ones(output_len - question_len, dtype=int),
+        torch.ones(output_len - question_len, dtype=int, device=answer_mask.device),
     ), f"expected: {torch.ones(output_len - question_len, dtype=int)}\noutput: {answer_mask[1][question_len :]}"  # answer

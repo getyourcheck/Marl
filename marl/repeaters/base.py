@@ -3,13 +3,32 @@ import numpy as np
 import torch
 from copy import deepcopy
 
+def find_mask_begin(padded_datas, mask_id=0):
+    """
+    finding the mask id begin index and it's length
+    """
+    begin_indexs = []
+    lengths = []
+
+    for padded_data in padded_datas:
+        is_flag = 0
+        for index, data in enumerate(padded_data):
+            if data != mask_id:
+                is_flag = 1
+                begin_indexs.append(index)
+                length = (np.array(padded_data)!=mask_id).sum()
+                lengths.append(length)
+                break
+        assert is_flag
+    return begin_indexs, lengths
+
 
 class BaseRepeater(object):
-    def __init__(self, reward_scale: bool = False,
+    def __init__(self, sft_model, reward_scale: bool = False,
                         fine_grained_rm: bool = False,
                         value_ema: bool = False,
                         **kwargs):
-        
+        self.sft_model = sft_model
         self.reward_scale = reward_scale
         self.fine_grained_rm = fine_grained_rm
         self.value_ema = value_ema
@@ -17,72 +36,104 @@ class BaseRepeater(object):
         self.gamma = 1.0
         self.gae_lambda = 0.95
         self.device = None
+        self.answer_end_id = 92542
 
-    # TODO
-    def process(self, trajectories: PolicyOutput, models):
-        assert "policy" in models.keys(), "[Repeater] make sure models have ... "
-        # models_dict = {"policy": actor_model, "rm_model": reward_model, "value_model": critic_model, "sft_model": actor_model}
-        # self.device = models['value_model'].device
-
-        kl_rewards, policy_logprobs, sft_logprobs = self._get_kl_rewards(trajectories, models['policy'], models['sft_model'])
+    def process(self, trajectories: PolicyOutput, policy_model, value_model, sft_model=None):
+        if sft_model is not None:
+            self.sft_model = sft_model
+        kl_rewards, policy_logprobs, sft_logprobs = self._get_kl_rewards(trajectories, policy_model)
         trajectories["kl_rewards"] = kl_rewards
         trajectories["policy_logprobs"] = policy_logprobs
         trajectories["sft_logprobs"] = sft_logprobs
 
-        values = self._get_values(trajectories, models['value_model'])
+        values_with_last_value = self._get_values(trajectories, value_model)
+        trajectories["values_with_last_value"] = values_with_last_value
 
-        # rewards = self._new_rewards(kl_rewards, values)
-        adv, returns = self._get_advantages_and_returns(values[:, :-1].cpu(), kl_rewards.cpu(), last_values=None)
-        
-        trajectories["values"] = values
-        trajectories["advs"] = adv
-        trajectories["returns"] = values # returns # TODO
+        advantages, returns = self._get_advantages_and_returns(trajectories)
+        trajectories["advantages"] = advantages
+        trajectories["returns"] = returns
 
-        # fake 
-        _question_mask = np.ones((trajectories.values.shape))
-        trajectories["question_mask"] = torch.from_numpy(np.array(_question_mask))
-        trajectories["answer_mask"] = deepcopy(trajectories["question_mask"][:, :-1])
-        # print(values.shape, adv.shape, returns.shape) 
-        # torch.Size([7, 1145]) torch.Size([7, 1144]) torch.Size([7, 1144])
         return trajectories
 
-    def _get_kl_rewards(self, trajectories: PolicyOutput, policy_model, sft_model):
-        # print(trajectories.output_ids.shape) # torch.Size([7, 1145])
-        policy_output = policy_model.infer(trajectories.output_ids, output_logprobs=True)
-        sft_output = sft_model.infer(trajectories.output_ids, output_logprobs=True)
+    def _get_kl_rewards(self, trajectories: PolicyOutput, policy_model):
+        rewards = trajectories.rewards
+        answer_mask = trajectories.answer_mask.cpu()
+        attention_mask = trajectories.attention_mask.cpu()
 
-        kl_div = policy_output.logprobs - sft_output.logprobs
-        # print(policy_output.logprobs.shape, sft_output.logprobs.shape) # torch.Size([7, 1144]) torch.Size([7, 1144])
-        kl_rewards = - 1.0 * self.kl_coeff * kl_div
-        # print(kl_rewards.shape) # torch.Size([7, 1144])
-        return kl_rewards, policy_output.logprobs, sft_output.logprobs
+        policy_output = policy_model.infer(trajectories.output_ids, attention_mask=attention_mask, output_logprobs=True)
+        sft_output = self.sft_model.infer(trajectories.output_ids, attention_mask=attention_mask, output_logprobs=True)
+        policy_logprobs = policy_output.logprobs.cpu() * answer_mask
+        sft_logprobs = sft_output.logprobs.cpu() * answer_mask
+
+        kl_div = policy_logprobs - sft_logprobs
+
+        kl_divergence_estimate = - 1.0 * self.kl_coeff * kl_div
+        # C1rN09: some tokens are supressed which lead log_probs to be -Inf. This will make ratios `nan`
+        is_inf = torch.logical_and(policy_logprobs.isinf(), sft_logprobs.isinf())
+        kl_divergence_estimate = torch.where(is_inf, 0, kl_divergence_estimate)
+        # C1rN09: <pad> tokens should have 0 reward
+        kl_rewards = kl_divergence_estimate * answer_mask
+
+        # (bs, 1), Note that in the answerr_mask, the padding is 0
+        begins_index, answers_length = find_mask_begin(answer_mask, 0)
+        finnal_rewards = kl_rewards.clone()
+        count = 0
+        kl_distance = []
+        # (bs, max_total_len) only add the rewards in the last.
+        for begin_index, ans_len in zip(begins_index, answers_length):
+            kl_distance.append(finnal_rewards[count, begin_index:begin_index+ans_len].mean())
+            finnal_rewards[count, begin_index+ans_len-1] += rewards[count]
+            count += 1
+
+        return finnal_rewards, policy_logprobs, sft_logprobs
 
     def _get_values(self, trajectories: PolicyOutput, value_model):
-        value_output = value_model.infer(trajectories.output_ids)
-        values = value_output.logits
-        # print(values.shape) # torch.Size([7, 1145])
-        return values
+        value_output = value_model.infer(trajectories.output_ids, attention_mask=trajectories.answer_mask)
+        values_with_last_value = value_output.logits.cpu() * trajectories.answer_mask.cpu()
+        return values_with_last_value
 
-    def _get_advantages_and_returns(self, values, rewards, last_values):
-        if last_values is None:
-            last_values = torch.tensor([0] * rewards.shape[0])
-            last_values = last_values
-        # Adopted from https://github.com/CarperAI/trlx/blob/main/trlx/models/modeling_ppo.py#L134
-        lastgaelam = 0
-        advantages_reversed = []
-        # print(values.shape, rewards.shape, ) # (7, 1144) (7, 1144)
-        length = rewards.shape[-1]
-        for t in reversed(range(0, length)):
-            nextvalues = values[:, t + 1] if t < length - 1 else last_values
-            # Since old_rewards and old_values are masked with action_mask, i.e. they have
-            # 0's at pad tokens, delta will be 0 if current t is at a pad token, so will
-            # lastgaelam
-            delta = rewards[:, t] + self.gamma * nextvalues - values[:, t]
-            lastgaelam = delta + self.gamma * self.gae_lambda * lastgaelam
-            advantages_reversed.append(lastgaelam)
-        advantages = torch.stack(advantages_reversed[::-1], dim=1)
-        returns = advantages + values
-        return advantages.detach(), returns
+    def _get_advantages_and_returns(self, trajectories):
+        output_ids = trajectories.output_ids.cpu()
+        answer_mask = trajectories.answer_mask.cpu()
+        values_with_last_value = trajectories.values_with_last_value
+        kl_rewards = trajectories.kl_rewards
+
+        begins_index, answers_length = find_mask_begin(answer_mask, 0)
+        count = 0
+        advantages_padded, returns_padded = torch.zeros_like(kl_rewards, dtype=torch.float32), torch.zeros_like(kl_rewards, dtype=torch.float32)
+        for begin_index, ans_len, value_with_last_value, reward, output_id in zip(\
+            begins_index, answers_length, values_with_last_value, kl_rewards, output_ids):
+            # shape :ans_len + 1
+            value_with_last_value = value_with_last_value[begin_index-1:begin_index+ans_len]
+            # shape :ans_len
+            reward = reward[begin_index:begin_index+ans_len]
+            last_gae_lam = torch.zeros((1), dtype=torch.float32)
+            # shape :ans_len
+            advantages = torch.zeros_like(reward, dtype=torch.float32)
+            step_nums = advantages.shape[-1]
+            # shape:ans_len + 1
+            dones = self._build_dones(output_id[begin_index:begin_index+ans_len])
+            for step in reversed(range(step_nums)):
+                next_non_terminal = 1 - dones[step + 1]
+                next_values = value_with_last_value[step+1]
+                # delta and last_gae_lam using value and reward 
+                delta = reward[step] + self.gamma * next_values * next_non_terminal - value_with_last_value[step]
+                last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
+                advantages[step] = last_gae_lam[0]
+            returns = advantages + value_with_last_value[:-1]
+            advantages_padded[count, begin_index:begin_index+ans_len] = advantages
+            returns_padded[count, begin_index:begin_index+ans_len] = returns
+            count += 1
+        return advantages_padded, returns_padded
+
+    # ans_len + 1: dones
+    def _build_dones(self, answer_ids):
+        dones = torch.tensor((answer_ids == self.answer_end_id).numpy().astype(np.float32))
+        # (1, )the first one is not done, so obs_0_dones=0
+        obs_0_dones = torch.zeros((1), dtype=torch.float32)
+        # (ans_len + 1)，
+        dones = torch.concat((obs_0_dones, dones), axis=0)
+        return dones
 
     # TODO
     def _get_fine_grained_values(self, trajectories):

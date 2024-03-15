@@ -10,23 +10,17 @@ from .base import MultiSourceDatset, InfiniteDataset
 
 
 @dataclass
-class Sequence:
-    token_ids_padding: List[int]
-    token_ids: List[int]
-    question_mask: List[int]
-    prompt: str = None
-    group: str = None
-    idx: str = None
+class Message:
+    message: List[dict]
+    token_ids: List[int] = None
 
 
-class TxtSequenceDataset(IterableDataset):
+class TxtMessageDataset(IterableDataset):
     """ Create sequences from dataset.
     """
     def __init__(self,
                  task_group_filename: str = None,
                  tokenizer=None,
-                 start_token = "[UNUSED_TOKEN_146]user\n",
-                 end_token = "[UNUSED_TOKEN_145]\n",
                  max_seq_len: int = 4096,
                  num_samples_each_epoch: int = 64,
                  is_valid: bool = False,
@@ -35,12 +29,13 @@ class TxtSequenceDataset(IterableDataset):
                  ):
         
         assert task_group_filename is not None, "[Data error] Specify your data task config"
-        self.example_dataset = MultiSourceDatset(task_group_filename=task_group_filename,
+        self.message_dataset = MultiSourceDatset(task_group_filename=task_group_filename,
                                                 sub_dataset_type="file",
                                                 )
         self.tokenizer = tokenizer
-        self.start_token = start_token
-        self.end_token = end_token
+        self.tokenizer.pad_token = self.tokenizer.unk_token
+        assert self.tokenizer.chat_template is not None, "Make sure tokenizer has chat_template."
+
         self.max_seq_len = max_seq_len
         self.num_samples_each_epoch = num_samples_each_epoch
         self.is_valid = is_valid
@@ -51,13 +46,13 @@ class TxtSequenceDataset(IterableDataset):
         random.seed(self.random_seed)
         if not is_valid:
             samples_cnts = []
-            for task in self.example_dataset._task_group:
+            for task in self.message_dataset._task_group:
                 task["target_num_each_epoch"] = int(task["prob"] * num_samples_each_epoch + 0.5)
                 inner_dataset = InfiniteDataset(task["dataset"], self.rng)
                 task["iterator"] = iter(inner_dataset)
                 samples_cnts.append(task["target_num_each_epoch"])
                 print(f"{task['filepath']}: task prob: {task['prob']}, "
-                        f"ori number of examples: {len(inner_dataset.data)}, "
+                        f"ori number of messages: {len(inner_dataset.data)}, "
                         f"target_num_each_epoch: {task['target_num_each_epoch']}")
             assert sum(samples_cnts) == num_samples_each_epoch, "[Dataset init] sample num error"
             print(f"[Txt] Training dataset initialized, random seed {self.random_seed}.")
@@ -69,70 +64,65 @@ class TxtSequenceDataset(IterableDataset):
             # epoch_rng only use in this epoch.
             epoch_rng = np.random.RandomState(self.epoch_index)
             # prepare epoch data
-            # print(f"prepare TxtSequenceDataset for epoch {self.epoch_index}...")
-            examples_all = []
-            for task in self.example_dataset._task_group:
+            # print(f"prepare TxtMessageDataset for epoch {self.epoch_index}...")
+            messages_all = []
+            for task in self.message_dataset._task_group:
                 if self.is_valid:
-                    examples = [ex for ex in task["dataset"]]
+                    messages = [ex for ex in task["dataset"]]
                 else:
-                    examples = [next(task["iterator"]) for _ in range(task["target_num_each_epoch"])]
-                print(f"prepare {len(examples)} data from {task['filepath']}")
-                epoch_rng.shuffle(examples)
-                examples_all.extend(examples)
-            epoch_rng.shuffle(examples_all)
-            print(f"prepare TxtSequenceDataset done: total number of examples is {len(examples_all)} for epoch {self.epoch_index}.")
+                    messages = [next(task["iterator"]) for _ in range(task["target_num_each_epoch"])]
+                print(f"prepare {len(messages)} data from {task['filepath']}")
+                epoch_rng.shuffle(messages)
+                messages_all.extend(messages)
+            epoch_rng.shuffle(messages_all)
+            print(f"prepare TxtMessageDataset done: total number of messages is {len(messages_all)} for epoch {self.epoch_index}.")
 
             batch_sequence = []
-            for index, example in enumerate(examples_all):
-                sequence = self._postprocess_sequence(example)
+            for index, message in enumerate(messages_all):
+                sequence = self._postprocess_sequence(message)
                 batch_sequence.append(sequence)
             assert len(batch_sequence) == self.num_samples_each_epoch, f"[Epoch {self.epoch_index}] Wrong data len"
             yield batch_sequence
 
             self.epoch_index += 1
 
-    def _postprocess_sequence(self, example):
+    def _postprocess_sequence(self, message):
         """Post process sequence: tokenization & truncation."""
-        # print(example)
-        question, answer = example["question"].strip(), example.get("answer", "").strip()
-        
-        tokens_question, tokens_answer = self.tokenizer.tokenize(question), self.tokenizer.tokenize(answer)
-        
-        tokens = (tokens_question + tokens_answer)
+        token_ids = self.tokenizer.apply_chat_template(message, tokenize=True, add_generation_prompt=True, return_tensors="pt")
 
-        if len(tokens) <= 4:
+        if token_ids.shape[-1] <= 4:
             return None
-        
-        tokens = [self.start_token] + tokens + [self.end_token]
 
-        assert len(tokens) <= self.max_seq_len, "{}-{}".format(len(tokens), self.max_seq_len)
-        if len(tokens) > self.max_seq_len:
+        assert token_ids.shape[-1] <= self.max_seq_len, "{}-{}".format(token_ids.shape[-1], self.max_seq_len)
+        if token_ids.shape[-1] > self.max_seq_len:
             # TODO truncation
-            raise RuntimeError(f"token_ids is too long: {len(tokens)}")
-        token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
-        # pos_ids = list(range(len(token_ids)))
-        token_ids_padding = self._padding_data(torch.tensor(token_ids))
-        question_mask = [1] * len(token_ids)
-        question_mask += [0] * (self.max_seq_len - len(token_ids))
-        
-        return Sequence(group=example["group"],
-                        idx=example["id"],
-                        prompt=question + answer,
-                        token_ids=np.array(token_ids),
-                        token_ids_padding=np.array(token_ids_padding),
-                        question_mask=np.array(question_mask)
-                        )
+            raise RuntimeError(f"token_ids is too long: {token_ids.shape[-1]}")
+        return Message(message=message,
+                       token_ids=token_ids,)
 
-    def _padding_data(self, data):
-        data = np.array(data)
-        shape = data.shape
-        if len(shape) == 3:
-            res = np.zeros([1, self.max_seq_len, self.max_seq_len], dtype=data.dtype)
-            res[:,:shape[1], :shape[2]] = data
-        elif len(shape) == 2:
-            res = np.zeros([1, self.max_seq_len], dtype=data.dtype)
-            res[:,:shape[1]] = data
-        else:
-            res = np.zeros([self.max_seq_len], dtype=data.dtype)
-            res[:len(data)] = data
-        return res 
+
+if __name__ == "__main__":
+    import sys
+
+    sys.path.extend(["./"])
+    from collections import defaultdict
+    from transformers import AutoTokenizer
+    from marl.dataset.txt_loader import TxtMessageDataset
+
+    """ppo reader test here"""
+    model_path = "internlm/internlm2-chat-1_8b-sft"
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    dataset_config = {
+        "task_group_filename": "data/config/task_ppo.json",
+        "tokenizer": tokenizer,
+        "max_seq_len": 4096,
+        "num_samples_each_epoch": 8,
+        "random_seed": 1024,
+    }
+
+    """Create txt env for PPO """
+    txt_iter = TxtMessageDataset(**dataset_config)
+
+    for data in txt_iter:
+        print(data)
+        exit()

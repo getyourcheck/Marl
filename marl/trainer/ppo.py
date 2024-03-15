@@ -9,18 +9,17 @@ from marl.loss.actor_loss import ActorLoss
 from marl.loss.critic_loss import CriticLoss
 
 
-
 class PPOTrainer(object):
     def __init__(self, policy_model, value_model, train_cfg=None):
         
         # policy
         self.policy_model = policy_model
         self.policy_learn_time = 1 # train_cfg.policy.learn_time
-        self.policy_minibatch = 1 # train_cfg.policy.minibatch
+        self.policy_minibatch = 7#1 # train_cfg.policy.minibatch
         # value
         self.value_model = value_model
         self.value_learn_time = 1 # train_cfg.value.learn_time
-        self.value_minibatch = 1 # train_cfg.value.minibatch
+        self.value_minibatch = 7#1 # train_cfg.value.minibatch
 
         self.sft_criterion = None
         self.policy_criterion = ActorLoss()
@@ -37,8 +36,9 @@ class PPOTrainer(object):
                 end = begin + self.policy_minibatch
                 policy_batch_inputs = {"input_ids": trajectories.output_ids[begin:end, :],
                                 "sft_logprobs": trajectories.sft_logprobs[begin:end, :],
-                                "advs": trajectories.advs[begin:end, :],
+                                "advs": trajectories.advantages[begin:end, :],
                                 "answer_mask": trajectories.answer_mask[begin:end, :],
+                                "attention_mask": trajectories.attention_mask[begin:end, :]
                                 }
                 assert len(policy_batch_inputs['input_ids']) == self.policy_minibatch, "[Policy learn] make sure len(policy_batch_inputs) == self.policy_minibatch"
 
@@ -49,9 +49,11 @@ class PPOTrainer(object):
                             mask=policy_batch_inputs["answer_mask"],
                             loss_factor=torch.tensor(loss_factor),
                         )
-                
+                # for k, v in labels.items():
+                #     print("[Policy Train]]", k, v.shape)
                 p_loss = policy_model.train(input_ids=policy_batch_inputs["input_ids"],
                                             labels=labels,     
+                                            attention_mask=policy_batch_inputs["attention_mask"],
                                             criterion=self.policy_criterion)
                 print(f"[Policy Train] time {round(time.time() - s_t, 2)}s Policy loss: {p_loss.item()}")
                 policy_loss.append(p_loss.item())
@@ -68,9 +70,10 @@ class PPOTrainer(object):
                 begin = i * self.value_minibatch
                 end = begin + self.value_minibatch
                 value_batch_inputs = {"input_ids": trajectories.output_ids[begin:end, :],
-                                        "values": trajectories.values[begin:end, :],
+                                        "values": trajectories.values_with_last_value[begin:end, :],
                                         "returns": trajectories.returns[begin:end, :],
-                                        "answer_mask": trajectories.question_mask[begin:end, :],
+                                        "answer_mask": trajectories.answer_mask[begin:end, :],
+                                        "attention_mask": trajectories.attention_mask[begin:end, :]
                                         }
                 assert len(value_batch_inputs['input_ids']) == self.value_minibatch, "[Value learn] make sure len(value_batch_inputs) == self.value_minibatch"
                 
@@ -80,10 +83,12 @@ class PPOTrainer(object):
                                 mask=value_batch_inputs["answer_mask"],
                                 loss_factor=torch.tensor(loss_factor),
                             )
-
+                # for k, v in labels.items():
+                #     print("[Value Train]]", k, v.shape)
                 # assert "input_ids" in batch_inputs.keys()
                 v_loss = value_model.train(input_ids=value_batch_inputs["input_ids"],
                                             labels=labels,     
+                                            attention_mask=value_batch_inputs["attention_mask"],
                                             criterion=self.value_criterion)
                 print(f"[Value Train] time {round(time.time() - s_t, 2)}s value loss: {v_loss.item()}")
                 value_loss.append(v_loss.item())

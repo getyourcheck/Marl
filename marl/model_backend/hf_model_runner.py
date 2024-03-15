@@ -86,6 +86,9 @@ class HfModelRunner:
         # 2. Tokenizer
         tokenizer_path = self.model_config.get("tokenizer_path", model_path)
         self.tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
+        self.tokenizer.pad_token = self.tokenizer.unk_token
+        if self.tokenizer.chat_template is None:
+            raise NotImplementedError("Make sure tokenizer has chat_template.")
 
         # 3. Trainer
         parallel: dict = self.model_config["parallel"]
@@ -298,7 +301,6 @@ class HfModelRunner:
                     dim=1,
                 ).to(self.device)
 
-                attention_mask = input_ids.new_ones(input_ids.size(), dtype=torch.bool)
                 fwd_output: SequenceClassifierOutputWithPast = self.model(
                     input_ids=input_ids, attention_mask=attention_mask, **infer_kwargs
                 )
@@ -364,9 +366,12 @@ class HfModelRunner:
         if output_hidden_states:
             output["hidden_states"] = model_output["hidden_states"]
         if output_logprobs:
-            output["logprobs"] = logprobs_from_logits(
+            logpy = logprobs_from_logits(
                 logits=output["logits"][:, :-1, :], labels=input_ids[:, 1:], gather=True
             )
+            logpy_shift_right_byone = torch.zeros_like(input_ids, dtype=output["logits"].dtype)
+            logpy_shift_right_byone[:, 1:] = logpy
+            output["logprobs"] = logpy_shift_right_byone
         return output
 
     # Generate
@@ -375,7 +380,6 @@ class HfModelRunner:
         self,
         inputs: Union[torch.Tensor, str, list[str]],
         batch_size: Optional[int] = -1,
-        tokenizer=None,
         attention_mask=None,
         step=-1,
         output_str=True,
@@ -418,6 +422,15 @@ class HfModelRunner:
 
         output_ids = model_output["sequences"]
         output = PolicyOutput(output_ids=output_ids)
+        # masks
+        output["question_mask"], output["answer_mask"] = get_question_answer_mask(
+            input_ids,
+            output_ids,
+            tokenizer_pad_token_id=self.tokenizer.pad_token_id,
+            generate_pad_token_id=generate_kwargs.get("pad_token_id"),
+        )
+        output["attention_mask"] = output.question_mask + output.answer_mask
+
         if output_logits:
             output["logits"] = model_output["logits"]  # tuple(torch.Tensor, )
         if output_attentions:
@@ -425,18 +438,17 @@ class HfModelRunner:
         if output_hidden_states:
             output["hidden_states"] = model_output["hidden_states"]
         if output_str:  # customized post processing
-            tokenizer = self.tokenizer if tokenizer is None else tokenizer
-            output["output_str"] = tokenizer.batch_decode(
+            output["output_str"] = self.tokenizer.batch_decode(
                 output_ids,
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False,
             )
-        output["question_mask"], output["answer_mask"] = get_question_answer_mask(
-            input_ids,
-            output_ids,
-            tokenizer_pad_token_id=tokenizer.pad_token_id,
-            generate_pad_token_id=generate_kwargs.get("pad_token_id"),
-        )
+            output["output_ans_str"] = self.tokenizer.batch_decode(
+                output_ids * output.answer_mask,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+
         output.to("cpu")
         return output
 
@@ -469,18 +481,20 @@ class HfModelRunner:
             if isinstance(topping, torch.Tensor):
                 print(f"[{self.__class__.__name__}] Cat list[torch.Tensor]: {inputs}")
                 return torch.cat(inputs, dim=0)
-            if not isinstance(topping, str):
-                raise TypeError(f"Unsupported type: type({topping}) inputs({inputs})")
-            if chat_template != None:
-                inputs = [
-                    self.tokenizer.apply_chat_template(
-                        [{"role": "user", "content": input}],
-                        tokenize=False,
-                        chat_template=chat_template,
-                        add_generation_prompt=True,
-                    )
-                    for input in inputs
-                ]
+            # if not isinstance(topping, str):
+            #     raise TypeError(f"Unsupported type: type({topping}) inputs({inputs})")
+            # if chat_template != None:
+            #     inputs = [
+            #         self.tokenizer.apply_chat_template(
+            #             [{"role": "user", "content": input}],
+            #             tokenize=False,
+            #             chat_template=chat_template,
+            #             add_generation_prompt=True,
+            #         )
+            #         for input in inputs
+            #     ]
+            if isinstance(topping, list):
+                inputs = [self.tokenizer.apply_chat_template(mes, tokenize=False, add_generation_prompt=True, return_tensors="pt") for mes in inputs]
             input_strs = inputs
         print(f"[{self.__class__.__name__}] encode string input into input_ids ...")
         output = self.tokenizer(input_strs, return_tensors="pt", padding=True)

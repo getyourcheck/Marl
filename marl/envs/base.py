@@ -31,10 +31,6 @@ class BaseEnv(object):
         pass
 
     @abstractmethod
-    def reset(self, sample: Sample = None) -> Union[BaseObservation, np.array]:
-        pass
-
-    @abstractmethod
     def render(self):
         pass
 

@@ -11,7 +11,7 @@ class TxtEnv(object):
     A generic RL environment to generate textual sequences.
     """
 
-    def __init__(self, dataloader: IterableDataset, reward_function=None, ):
+    def __init__(self, dataloader: IterableDataset, reward_function=None, reward_model_config=None):
         """
         Args:
             dataloader (IterableDataset): generate rl data iteratively
@@ -19,52 +19,41 @@ class TxtEnv(object):
         """
         self.dataloader = iter(dataloader)
         self.reward_function = reward_function
-        self._cur_episodes = []
-        self.max_step = 1024
 
-    def rollout(self, policy, display=False):
+        self._cur_messagess = []
+        self.max_step = 1024
+        self.generate_config = {'do_sample': True, 
+                                'temperature': 1.0, 
+                                'top_k': 0, 
+                                'top_p': 0.9, 
+                                'min_new_tokens': 1, 
+                                # 'max_length': 2048, 
+                                'num_beams': 1, 
+                                # 'early_stopping': True, 
+                                'eos_token_id': 92542, 
+                                'pad_token_id': 0}
+
+    def rollout(self, policy_model, display=False):
         s_t = time.time()
         sample_data = next(self.dataloader)
-        # print(sample_data) [sequence, ...]
-        # Sequence(token_ids_padding=array([    0, 60836, ...,     0,     0,     0]), token_ids=array([    0, 60836, 68855, ...]), question_mask=array([1, 1, 1, ..., 0, 0, 0]), prompt='请回答下面的问题：\n小孩身上起湿疹，该怎么办我家女儿今年5岁了，身上过敏，快半个月了，到几家医院看了。都说是湿疹，刚开始就脸上有，现在身上也有请问这种情况要怎么办，该用什么药效果比较好\n答案：\n\n在你的整个回答中，在你的答案中至少突出显示 4 个部分，例如用markdown语法 `` 符号突出显示。同时，首先，不加改变地重复问题，然后给出你的回答（在重复求之前不要说任何话；你需要重复的不包括这句话）。', group='test_0', idx='zh-1015')
 
-        input_questions = []
-        input_ids = []
-        questions_masks = []
+        input_messages = []
         for data in sample_data:
-            input_ids.append(data.token_ids_padding)
-            questions_masks.append(data.question_mask)
+            message = data.message
+            input_messages.append(message)
 
-            input_questions.append(data.prompt)
-        input_ids = torch.from_numpy(np.array(input_ids))
+        output_gen = policy_model.generate(input_messages, step=self.max_step, output_logits=True, output_str=True, generate_kwargs=self.generate_config)
 
-        # TODO deal with answer & mask
-        output_gen = policy.generate(input_questions, step=self.max_step, output_logits=True, output_str=True)
-        # question/ans mask
-        # _question_mask = np.ones((output_gen.logprobs.shape))
-        # output_gen["question_mask"] = torch.from_numpy(np.array(_question_mask))
-        # output_gen["answer_mask"] = deepcopy(output_gen["question_mask"])
-
-        print(f"[TxtEnv & {policy.__class__.__name__}] {round(time.time() - s_t, 2)}s generate {len(sample_data)} episodes.")
-        output_gen["rewards"] = self._get_reward(output_gen)
-
-        # print(dir(trajectories))
-        # print(trajectories.rewards) # [0.435546875, -2.140625, -0.69140625, -1.6796875, -1.6796875, 1.5859375, -1.9296875]
-        # # print(trajectories.logits[0].shape) # torch.Size([7, 92544])
-        # print("output_ids", trajectories.output_ids.shape) # torch.Size([7, 1145]
-        # print("output_str", trajectories.output_str) # None
-        # print("logprobs", trajectories.logprobs) # None
+        print(f"[TxtEnv & {policy_model.__class__.__name__}] {round(time.time() - s_t, 2)}s generate {len(sample_data)} episodes.")
+        output_gen["rewards"] = self._get_reward(input_messages, output_gen)
         return output_gen
     
-    def _get_reward(self, policyout):
+    def _get_reward(self, input_messages, policyout):
         if self.reward_function is not None:
-            rewards = []
-            rm_strs = policyout.output_str
-            # TODO deal with rm data
-            # chat_1_str = "<s><|im_start|>user\nHello! What's your name?<|im_end|>\n<|im_start|>assistant\nMy name is InternLM2!<|im_end|>\n"
-            for rm_s in rm_strs:
-                r = self.reward_function.infer(rm_s)
-                rewards.append(r.logits.item())
+            for i in range(len(range(len(policyout.output_ans_str)))):
+                input_messages[i].append({"role": "assistant", "content": policyout.output_ans_str[i]})
+            rm_out = self.reward_function.infer(input_messages)
+            rewards = rm_out.logits.cpu().squeeze(-1)
             return rewards
         print(f"[TxtEnv] No reward funtion, no reward provided.")
         return None
@@ -75,3 +64,70 @@ class TxtEnv(object):
 
     # def render(self):
     #     pass
+
+
+if __name__ == "__main__":
+    import sys
+
+    sys.path.extend(["./", "marl/dataset"])
+    from collections import defaultdict
+    from marl.dataset.txt_loader import TxtMessageDataset
+    from marl.tokenizer.tokenizer_utils import get_tokenizer
+    # from marl.envs.txt_env import TxtEnv
+    import torch
+    """txt env test here"""
+    model_path = "internlm/internlm2-chat-1_8b-sft"
+    tokenizer_path = model_path
+    tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
+
+    dataset_config = {
+        "task_group_filename": "data/config/task_ppo.json",
+        "tokenizer": tokenizer,
+        "max_seq_len": 4096,
+        "num_samples_each_epoch": 8,
+        "random_seed": 1024,
+    }
+
+    # actor model
+    from marl.config import Config
+    trainer_config = Config(
+        dict(
+            model_path=model_path,
+            torch_dtype=torch.bfloat16,
+            trainer_type="huggingface",
+            parallel=dict(
+                data=dict(size=1),
+                tensor=dict(size=1, mode="1d"),
+                pipeline=dict(size=1, interleaved_overlap=False),
+            ),
+        ),
+    )
+    from marl.model_backend.hf_model_runner import HfModelRunner
+    actor_model = HfModelRunner(model_config=trainer_config)
+    actor_model.initialize()
+    # rm model
+    from marl.config_consts import MODEL_TYPE_REWARD, ENGINE_HUGGINGFACE
+    reward_trainer_config = Config(
+        dict(
+            model_path="/cpfs01/shared/public/llm_model/ckpt/Luyou_1B/R-Luyou-1B-8k-D20240130-v1-hf/",
+            model_type=MODEL_TYPE_REWARD,
+            trainer_type=ENGINE_HUGGINGFACE,
+            parallel=dict(
+                data=dict(size=1, mode="ddp"),
+                tensor=dict(size=1, mode="1d"),
+                pipeline=dict(size=1, interleaved_overlap=False),
+                sequence=False,
+            ),
+        ),
+    )
+    reward_model = HfModelRunner(model_config=reward_trainer_config)
+    reward_model.initialize()
+
+    """Create txt env for PPO """
+    txt_loader = TxtMessageDataset(**dataset_config)
+    txt_env = TxtEnv(dataloader=txt_loader, reward_function=reward_model)
+    trajectories = txt_env.rollout(policy_model==actor_model)
+    
+    print((trajectories.output_ids.shape))
+    # for i, s in enumerate(trajectories.output_str):
+    #     print(f"[REPLY {i} BGN] {'#' * 20}\n{s}\n[REPLY {i} END] {'#' * 20}\n")

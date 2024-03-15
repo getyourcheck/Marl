@@ -7,7 +7,7 @@ from marl.config_consts import ENGINE_HUGGINGFACE
 trainer_config = Config(
     dict(
         model_path="internlm/internlm2-chat-1_8b-sft",
-        torch_dtype=torch.float16,
+        torch_dtype=torch.bfloat16,
         model_type="actor",
         trainer_type=ENGINE_HUGGINGFACE,
         train_kwargs=dict(
@@ -30,7 +30,7 @@ import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # avoid Accelerator() from using multi-GPU
 
-tokenizer_path = trainer_config.get("tokenizer_path", trainer_config.get("model_path"))
+tokenizer_path = trainer_config.get("tokenizer_path", model_path="internlm/internlm2-chat-1_8b-sft")
 tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
 
 input_text_list = ["A list of colors: red, blue", "Portugal is"]

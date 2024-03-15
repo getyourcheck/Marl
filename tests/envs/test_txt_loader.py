@@ -8,7 +8,7 @@ import sys
 sys.path.extend(["marl/dataset"])
 from collections import defaultdict
 from transformers import AutoTokenizer
-from marl.dataset.txt_loader import TxtSequenceDataset
+from marl.dataset.txt_loader import TxtMessageDataset
 
 if __name__ == "__main__":
     """ppo reader test here"""
@@ -20,12 +20,10 @@ if __name__ == "__main__":
         "max_seq_len": 4096,
         "num_samples_each_epoch": 8,
         "random_seed": 1024,
-        "start_token": "[UNUSED_TOKEN_146]user\n",
-        "end_token": "[UNUSED_TOKEN_145]\n",
     }
 
     """Create txt env for PPO """
-    txt_iter = TxtSequenceDataset(**dataset_config)
+    txt_iter = TxtMessageDataset(**dataset_config)
 
     test_iter = 0
     for data in txt_iter:

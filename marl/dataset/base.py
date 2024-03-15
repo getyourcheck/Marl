@@ -90,7 +90,7 @@ class MultiSourceDatset(IterableDataset):
 
 if __name__ == "__main__":
     dataset_config = {
-        "task_group_filename": "marl/config/task_sft.json",
+        "task_group_filename": "data/config/task_ppo.json",
         "max_seq_len": 4096,
         "num_samples_each_epoch": 8,
         "random_seed": 1

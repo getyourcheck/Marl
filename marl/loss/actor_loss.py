@@ -1,10 +1,7 @@
 import torch
 from typing import Any
+from ..policy_output import PolicyOutput, logprobs_from_logits
 
-def gather_log_probs(logits, labels):
-    log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
-    log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1))
-    return log_probs_labels.squeeze(-1)
 
 class ActorLoss(torch.nn.Module):
     """
@@ -19,7 +16,7 @@ class ActorLoss(torch.nn.Module):
 
     def actor_loss_fn(self, logprobs, old_logprobs, advantages, mask, loss_factor):
         # policy gradient loss
-        log_ratio = (logprobs - old_logprobs) * mask
+        log_ratio = (logprobs - old_logprobs)
         # C1rN09: some tokens are supressed which lead log_probs to be -Inf. This will make ratios `nan`
         is_supressed = torch.logical_and(logprobs.isinf(), old_logprobs.isinf())
         log_ratio = torch.where(is_supressed, 0, log_ratio)
@@ -34,7 +31,7 @@ class ActorLoss(torch.nn.Module):
             raise RuntimeError(f"ActorLoss.loss_type must be ['per_seq', 'per_token'], got {self.loss_type}")
         return pg_loss
 
-    def forward(self, logits: torch.Tensor, *labels: tuple[dict[str, Any]]):
+    def forward(self, logits: torch.Tensor, labels: dict[str, Any]):
         """Forward function of ActorLoss.
 
         Args:
@@ -56,17 +53,22 @@ class ActorLoss(torch.nn.Module):
             Tensor: Return the final loss
         """
         assert logits.ndim == 2 or logits.ndim == 3
-        micro_bsz = len(labels)
+        mask = labels["mask"]  # (micro_bsz, seqlen)
+        # print("Loss", labels)
+        micro_bsz = labels["input_ids"].shape[0]
         # logits = gather_output(logits)  # TODO: handle tp.
         if logits.ndim == 2:  # (seqlen, vocab_size)
             logits = logits.reshape(micro_bsz, -1, logits.shape[-1])  # (micro_bsz, seqlen, vocab_size)
-        assert logits.shape[0] == len(labels)
-        input_ids = torch.vstack([label["input_ids"] for label in labels])  # (micro_bsz, seqlen)
-        old_logprobs = torch.vstack([label["old_logprobs"] for label in labels])  # (micro_bsz, seqlen - 1)
-        advantages = torch.vstack([label["advantages"] for label in labels])  # (micro_bsz, seqlen - promptlen)
-        mask = torch.vstack([label["mask"] for label in labels])  # (micro_bsz, seqlen - 1)
-        loss_factor = labels[0]["loss_factor"]
-        logprobs = gather_log_probs(logits[:, :-1, :], input_ids[:, 1:].long())  # (micro_bsz, seqlen - 1)
+        assert logits.shape[0] == labels["input_ids"].shape[0]
+        input_ids = labels["input_ids"]  # (micro_bsz, seqlen)
+        old_logprobs = labels["old_logprobs"] * mask  # (micro_bsz, seqlen)
+        advantages = labels["advantages"] * mask  # (micro_bsz, seqlen)
+        loss_factor = labels["loss_factor"]
+        
+        logpy = logprobs_from_logits(logits=logits[:, :-1, :], labels=input_ids[:, 1:], gather=True)
+        logpy_shift_right_byone = torch.zeros_like(input_ids, dtype=logits.dtype)
+        logpy_shift_right_byone[:, 1:] = logpy
+        logprobs = logpy_shift_right_byone * mask
 
         loss = self.actor_loss_fn(
             logprobs=logprobs,

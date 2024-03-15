@@ -34,7 +34,7 @@ class CriticLoss(torch.nn.Module):
             )
         return vf_loss
 
-    def forward(self, values: torch.Tensor, *labels: tuple[dict[str, Any]]):
+    def forward(self, values: torch.Tensor, labels: dict[str, Any]):
         """Forward function of CriticLoss.
 
         Args:
@@ -55,13 +55,13 @@ class CriticLoss(torch.nn.Module):
         Returns:
             Tensor: Return the final loss
         """
-        assert values.ndim == 2 or values.ndim == 3
-        values = values[:, :-1]  # (micro_bsz, seqlen - 1)
-        old_values = labels[0]["old_values"][:, :-1]  # (micro_bsz, seqlen - 1)
-        returns = labels[0]["returns"][:, :-1]  # (micro_bsz, seqlen - promptlen)
-        mask = labels[0]["mask"][:, :-1]  # (micro_bsz, seqlen - 1)
-        loss_factor = labels[0]["loss_factor"]
-        print(values.shape, old_values.shape, returns.shape, mask.shape)
+        assert values.ndim == 2
+        mask = labels["mask"]  # (micro_bsz, seqlen)
+        values = values * mask # (micro_bsz, seqlen)
+        old_values = labels["old_values"] * mask  # (micro_bsz, seqlen)
+        returns = labels["returns"] * mask # (micro_bsz, seqlen)
+        loss_factor = labels["loss_factor"]
+        # print(values.shape, old_values.shape, returns.shape, mask.shape)
         loss = self.critic_loss_fn(
             values=values,
             old_values=old_values,

@@ -12,22 +12,29 @@ from marl.loss.critic_loss import CriticLoss
 class PPOTrainer(object):
     def __init__(self, policy_model, value_model, train_cfg=None):
         
+        self.train_cfg = train_cfg
         # policy
         self.policy_model = policy_model
         self.policy_learn_time = 1 # train_cfg.policy.learn_time
-        self.policy_minibatch = 7#1 # train_cfg.policy.minibatch
+
+        self.sft_minibatch = self.train_cfg['sft_minibatch'] if self.train_cfg.get("sft_minibatch", None) is not None else 0
+        self.policy_minibatch = self.train_cfg["ppo_minibatch"]
+
         # value
         self.value_model = value_model
         self.value_learn_time = 1 # train_cfg.value.learn_time
-        self.value_minibatch = 7#1 # train_cfg.value.minibatch
+        self.value_minibatch = self.train_cfg["value_minibatch"]
 
         self.sft_criterion = None
-        self.policy_criterion = ActorLoss()
-        self.value_criterion = CriticLoss()
+        self.policy_criterion = ActorLoss(cliprange=0.2, loss_type="per_seq")
+        self.value_criterion = CriticLoss(cliprange_value=0.5, loss_type="per_seq")
 
     def policy_learn(self, trajectories, policy_model):
         policy_updates = len(trajectories.output_ids) // self.policy_minibatch
         policy_loss = []
+        # TODO, 
+        pt_loss = []
+
         for _ in range(self.policy_learn_time):
             for i in range(policy_updates):
                 print('[Policy Train] start policy trains {}/{} | {}'.format(i + 1, policy_updates, _ + 1))
@@ -55,10 +62,10 @@ class PPOTrainer(object):
                                             labels=labels,     
                                             attention_mask=policy_batch_inputs["attention_mask"],
                                             criterion=self.policy_criterion)
-                print(f"[Policy Train] time {round(time.time() - s_t, 2)}s Policy loss: {p_loss.item()}")
+                print(f"[Policy Train] {self.policy_minibatch} batch, time {round(time.time() - s_t, 2)}s Policy loss: {p_loss.item()}")
                 policy_loss.append(p_loss.item())
 
-        return policy_loss
+        return policy_loss, pt_loss
 
     def value_learn(self, trajectories, value_model):
         value_updates = len(trajectories.output_ids) // self.value_minibatch
@@ -90,8 +97,7 @@ class PPOTrainer(object):
                                             labels=labels,     
                                             attention_mask=value_batch_inputs["attention_mask"],
                                             criterion=self.value_criterion)
-                print(f"[Value Train] time {round(time.time() - s_t, 2)}s value loss: {v_loss.item()}")
+                print(f"[Value Train] {self.value_minibatch} batch, time {round(time.time() - s_t, 2)}s value loss: {v_loss.item()}")
                 value_loss.append(v_loss.item())
 
         return value_loss
-        

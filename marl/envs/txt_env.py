@@ -11,7 +11,7 @@ class TxtEnv(object):
     A generic RL environment to generate textual sequences.
     """
 
-    def __init__(self, dataloader: IterableDataset, reward_function=None, reward_model_config=None):
+    def __init__(self, dataloader: IterableDataset, max_step=2048, reward_function=None, reward_model_config=None):
         """
         Args:
             dataloader (IterableDataset): generate rl data iteratively
@@ -21,15 +21,16 @@ class TxtEnv(object):
         self.reward_function = reward_function
 
         self._cur_messagess = []
-        self.max_step = 1024
+        self.max_step = max_step
+        self.max_infer_batchsize = 16
+        self.clip_reward_min = - 1.5
+        self.clip_reward_max = 1.5
         self.generate_config = {'do_sample': True, 
                                 'temperature': 1.0, 
                                 'top_k': 0, 
                                 'top_p': 0.9, 
-                                'min_new_tokens': 1, 
-                                # 'max_length': 2048, 
+                                'min_new_tokens': 1,
                                 'num_beams': 1, 
-                                # 'early_stopping': True, 
                                 'eos_token_id': 92542, 
                                 'pad_token_id': 0}
 
@@ -37,18 +38,35 @@ class TxtEnv(object):
         s_t = time.time()
         sample_data = next(self.dataloader)
 
-        input_messages = []
+        ppo_input_messages = []
+        sft_input_messages = []
         for data in sample_data:
             message = data.message
-            input_messages.append(message)
+            if data.mes_type == "ppo":
+                ppo_input_messages.append(message)
+            elif data.mes_type == "sft":
+                sft_input_messages.append(message)
+            else:
+                raise TypeError(f"Wrong message type {data.mes_type}")
 
-        output_gen = policy_model.generate(input_messages, step=self.max_step, output_logits=True, output_str=True, generate_kwargs=self.generate_config)
+        # ppo data
+        trajectories = policy_model.generate(ppo_input_messages, step=self.max_step, output_logits=True, output_str=True, generate_kwargs=self.generate_config)
+        print(f"[TxtEnv & {policy_model.__class__.__name__}] {round(time.time() - s_t, 2)}s generate {len(ppo_input_messages)} ppo episodes.")
+        rewards = self._get_reward(ppo_input_messages, trajectories)
+        clipped_rewards = torch.clamp(rewards, min=self.clip_reward_min, max=self.clip_reward_max)
+        trajectories["rewards"] = rewards
+        trajectories["clipped_rewards"] = clipped_rewards
 
-        print(f"[TxtEnv & {policy_model.__class__.__name__}] {round(time.time() - s_t, 2)}s generate {len(sample_data)} episodes.")
-        output_gen["rewards"] = self._get_reward(input_messages, output_gen)
-        return output_gen
+        # sft data
+        if len(sft_input_messages) > 0:
+            sft_inputs = [policy_model.tokenizer.apply_chat_template(mes, tokenize=False, add_generation_prompt=False, return_tensors="pt") for mes in sft_input_messages]
+            trajectories.sft_data = policy_model.tokenizer(sft_inputs, return_tensors="pt", padding=True)
+            print(f"[TxtEnv & {policy_model.__class__.__name__}] gets {len(sft_input_messages)} sft episodes.")
+
+        return trajectories
     
     def _get_reward(self, input_messages, policyout):
+        input_messages = deepcopy(input_messages)
         if self.reward_function is not None:
             for i in range(len(range(len(policyout.output_ans_str)))):
                 input_messages[i].append({"role": "assistant", "content": policyout.output_ans_str[i]})
@@ -57,13 +75,6 @@ class TxtEnv(object):
             return rewards
         print(f"[TxtEnv] No reward funtion, no reward provided.")
         return None
-
-    # # Standard gym methods
-    # def step(self, action):
-    #     pass
-
-    # def render(self):
-    #     pass
 
 
 if __name__ == "__main__":
@@ -81,10 +92,12 @@ if __name__ == "__main__":
     tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
 
     dataset_config = {
-        "task_group_filename": "data/config/task_ppo.json",
+        "ppo_data_filename": "data/config/1.8B_ppo.json",
+        "sft_data_filename": "data/config/1.8B_sft.json",
+        "num_samples_each_epoch": 10,
+        "sft_data_samples": 2,
         "tokenizer": tokenizer,
         "max_seq_len": 4096,
-        "num_samples_each_epoch": 8,
         "random_seed": 1024,
     }
 
@@ -126,8 +139,10 @@ if __name__ == "__main__":
     """Create txt env for PPO """
     txt_loader = TxtMessageDataset(**dataset_config)
     txt_env = TxtEnv(dataloader=txt_loader, reward_function=reward_model)
-    trajectories = txt_env.rollout(policy_model==actor_model)
+    trajectories = txt_env.rollout(policy_model=actor_model)
     
-    print((trajectories.output_ids.shape))
+    print(dir(trajectories))
+    print(trajectories.sft_data.input_ids.shape)
+    print(trajectories.sft_data.attention_mask.shape)
     # for i, s in enumerate(trajectories.output_str):
     #     print(f"[REPLY {i} BGN] {'#' * 20}\n{s}\n[REPLY {i} END] {'#' * 20}\n")

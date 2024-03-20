@@ -1,0 +1,42 @@
+[
+    {
+        "prob": 0.12,
+        "filepath": "/cpfs01/user/lishuaibin/train_rlhf/ppo_datas/messages_data/0801-train.json"
+    },
+    {
+        "prob": 0.2,
+        "filepath": "/cpfs01/user/lishuaibin/train_rlhf/ppo_datas/messages_data/ANLI-0904-train.json"
+    },
+    {
+        "prob": 0.1,
+        "filepath": "/cpfs01/user/lishuaibin/train_rlhf/ppo_datas/messages_data/COIG-0906-train.json"
+    },
+    {
+        "prob": 0.1,
+        "filepath": "/cpfs01/user/lishuaibin/train_rlhf/ppo_datas/messages_data/data_reflow_2w.json"
+    },
+    {
+        "prob": 0.2,
+        "filepath": "/cpfs01/user/lishuaibin/train_rlhf/ppo_datas/messages_data/gaokao_essay_prompt.json"
+    },
+    {
+        "prob": 0.1,
+        "filepath": "/cpfs01/user/lishuaibin/train_rlhf/ppo_datas/messages_data/gsm8k_ci.json"
+    },
+    {
+        "prob": 0.1,
+        "filepath": "/cpfs01/user/lishuaibin/train_rlhf/ppo_datas/messages_data/gsm8k_sample200_prompt_only.json"
+    },
+    {
+        "prob": 0.1,
+        "filepath": "/cpfs01/user/lishuaibin/train_rlhf/ppo_datas/messages_data/haochen_data.json"
+    },
+    {
+        "prob": 0.1,
+        "filepath": "/cpfs01/user/lishuaibin/train_rlhf/ppo_datas/messages_data/identity_200_sft_for_ppo_prompt_only.json"
+    },
+    {
+        "prob": 0.1,
+        "filepath": "/cpfs01/user/lishuaibin/train_rlhf/ppo_datas/messages_data/non_toxic_single_turn_tie_both_bad-train.json"
+    }
+]

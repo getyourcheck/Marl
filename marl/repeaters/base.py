@@ -41,7 +41,8 @@ class BaseRepeater(object):
     def process(self, trajectories: PolicyOutput, policy_model, value_model, sft_model=None):
         if sft_model is not None:
             self.sft_model = sft_model
-        kl_rewards, policy_logprobs, sft_logprobs = self._get_kl_rewards(trajectories, policy_model)
+        kl_rewards, policy_logprobs, sft_logprobs, kl_distance = self._get_kl_rewards(trajectories, policy_model)
+        trajectories["kl_distance"] = kl_distance
         trajectories["kl_rewards"] = kl_rewards
         trajectories["policy_logprobs"] = policy_logprobs
         trajectories["sft_logprobs"] = sft_logprobs
@@ -56,7 +57,8 @@ class BaseRepeater(object):
         return trajectories
 
     def _get_kl_rewards(self, trajectories: PolicyOutput, policy_model):
-        rewards = trajectories.rewards
+        # rewards = trajectories.rewards
+        rewards = trajectories.clipped_rewards
         answer_mask = trajectories.answer_mask.cpu()
         attention_mask = trajectories.attention_mask.cpu()
 
@@ -81,11 +83,11 @@ class BaseRepeater(object):
         kl_distance = []
         # (bs, max_total_len) only add the rewards in the last.
         for begin_index, ans_len in zip(begins_index, answers_length):
-            kl_distance.append(finnal_rewards[count, begin_index:begin_index+ans_len].mean())
+            kl_distance.append(finnal_rewards[count, begin_index:begin_index+ans_len].mean().item())
             finnal_rewards[count, begin_index+ans_len-1] += rewards[count]
             count += 1
 
-        return finnal_rewards, policy_logprobs, sft_logprobs
+        return finnal_rewards, policy_logprobs, sft_logprobs, kl_distance
 
     def _get_values(self, trajectories: PolicyOutput, value_model):
         value_output = value_model.infer(trajectories.output_ids, attention_mask=trajectories.answer_mask)
@@ -100,16 +102,16 @@ class BaseRepeater(object):
 
         begins_index, answers_length = find_mask_begin(answer_mask, 0)
         count = 0
-        advantages_padded, returns_padded = torch.zeros_like(kl_rewards, dtype=torch.float32), torch.zeros_like(kl_rewards, dtype=torch.float32)
+        advantages_padded, returns_padded = torch.zeros_like(kl_rewards, dtype=values_with_last_value.dtype), torch.zeros_like(kl_rewards, dtype=values_with_last_value.dtype)
         for begin_index, ans_len, value_with_last_value, reward, output_id in zip(\
             begins_index, answers_length, values_with_last_value, kl_rewards, output_ids):
             # shape :ans_len + 1
             value_with_last_value = value_with_last_value[begin_index-1:begin_index+ans_len]
             # shape :ans_len
             reward = reward[begin_index:begin_index+ans_len]
-            last_gae_lam = torch.zeros((1), dtype=torch.float32)
+            last_gae_lam = torch.zeros((1), dtype=values_with_last_value.dtype)
             # shape :ans_len
-            advantages = torch.zeros_like(reward, dtype=torch.float32)
+            advantages = torch.zeros_like(reward, dtype=values_with_last_value.dtype)
             step_nums = advantages.shape[-1]
             # shape:ans_len + 1
             dones = self._build_dones(output_id[begin_index:begin_index+ans_len])

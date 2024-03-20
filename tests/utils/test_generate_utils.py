@@ -8,7 +8,8 @@ from marl.loss.pretrain_loss import PretrainLoss
 from marl.model_backend.generate_utils import (
     partition_by_micro_batch_size, 
     partition_label_by_micro_batch_size,
-    partition_list_by_micro_batch_size
+    partition_list_by_micro_batch_size,
+    merge_loss_list
 )
 
 def test_partition_by_micro_batch_size():
@@ -126,7 +127,7 @@ def test_partition_label_by_micro_batch_size():
 
 def test_partition_list_by_micro_batch_size():
     input_ids=[torch.tensor([0,1,2,3,4]),torch.tensor([5,6,7,8,9])]
-    micro_batch_size=3
+    micro_batch_size=[3,3]
     labels=[
         {
             "key1":torch.Tensor([0,1,2,3,4]),
@@ -156,8 +157,49 @@ def test_partition_list_by_micro_batch_size():
     assert micro_batches[1][0]["loss_weights"] == 1
     assert micro_batches[0][1]["loss_weights"] == 2
     assert micro_batches[1][1]["loss_weights"] == 2
+    input_ids=[torch.tensor([0,1,2,3,4]),torch.tensor([5,6,7,8,9,10,11,12,13,14])]
+    micro_batch_size=[3,6]
+    labels=[
+        {
+            "key1":torch.Tensor([0,1,2,3,4]),
+            "loss_factor":torch.Tensor([0]),
+        },
+        torch.tensor([5,6,7,8,9,10,11,12,13,14])
+    ]
+    attention_mask=[torch.tensor([0,1,2,3,4]),torch.tensor([5,6,7,8,9,10,11,12,13,14])]
+    loss_weights=[1,2]
+    micro_batches = partition_list_by_micro_batch_size(input_ids,micro_batch_size,labels,attention_mask,loss_weights)
+    assert len(micro_batches) == 2
+    assert torch.equal(micro_batches[0][0]["input_ids"], torch.tensor([0,1,2]))
+    assert torch.equal(micro_batches[1][0]["input_ids"], torch.tensor([3,4]))
+    assert torch.equal(micro_batches[0][1]["input_ids"], torch.tensor([5,6,7,8,9,10]))
+    assert torch.equal(micro_batches[1][1]["input_ids"], torch.tensor([11,12,13,14]))
+    assert torch.equal(micro_batches[0][0]["labels"]["key1"], torch.tensor([0,1,2]))
+    assert torch.equal(micro_batches[1][0]["labels"]["key1"], torch.tensor([3,4]))
+    assert torch.equal(micro_batches[0][0]["labels"]["loss_factor"], torch.Tensor([0]))
+    assert torch.equal(micro_batches[1][0]["labels"]["loss_factor"], torch.Tensor([0]))
+    assert torch.equal(micro_batches[0][1]["labels"], torch.Tensor([5,6,7,8,9,10]))
+    assert torch.equal(micro_batches[1][1]["labels"], torch.Tensor([11,12,13,14]))
+    assert torch.equal(micro_batches[0][0]["attention_mask"], torch.tensor([0,1,2]))
+    assert torch.equal(micro_batches[1][0]["attention_mask"], torch.tensor([3,4]))
+    assert torch.equal(micro_batches[0][1]["attention_mask"], torch.tensor([5,6,7,8,9,10]))
+    assert torch.equal(micro_batches[1][1]["attention_mask"], torch.tensor([11,12,13,14]))
+    assert micro_batches[0][0]["loss_weights"] == 1
+    assert micro_batches[1][0]["loss_weights"] == 1
+    assert micro_batches[0][1]["loss_weights"] == 2
+    assert micro_batches[1][1]["loss_weights"] == 2
 
 
+
+def test_merge_loss_list():
+    loss_list = [
+        [torch.tensor([100]),torch.tensor([300])],
+        [torch.tensor([200]),torch.tensor([400])]
+    ]
+    merged = merge_loss_list(loss_list)
+    assert len(merged) == 2
+    assert merged[0].item() == 150
+    assert merged[1].item() == 350
 
 def test_partition_generate_and_infer():
     step = 10
@@ -262,6 +304,9 @@ def test_partition_generate_and_infer():
     assert torch.equal(policy_output_5["logprobs"][0],policy_output_6['logprobs'][1])
 
 def test_train():
+    def weighted_loss(train_loss, pretrain_loss, loss_weights):
+        loss_weights = [x / float(len(loss_weights)) for x in [1,2]]  # to 1
+        return train_loss * loss_weights[0] + pretrain_loss * loss_weights[1]
     trainer_config = Config(
         dict(
             model_path="internlm/internlm2-chat-1_8b-sft",
@@ -362,29 +407,37 @@ def test_train():
           2308,   281, 18590,   518,   451, 21239,  8726,   454,  8917,   313,
           7175, 34209,   569,   2792]]).cuda()
     set_seed(1234)
-    loss_4 = mr.train(
+    train_loss_4, pre_train_loss_4 = mr.train(
         [input_ids[0].unsqueeze(0),pretrain_input_ids[0].unsqueeze(0)], 
         [labels_0,pretrain_labels[0].unsqueeze(0)], 
         criterion=[ActorLoss(),PretrainLoss()], 
         loss_weights=[1,2],
         attention_mask = [None,None],
-        step_interval=999).item()
+        step_interval=999)
+    loss_4 = weighted_loss(train_loss_4.item(),pre_train_loss_4.item(),[1,2])
     set_seed(1234)
-    loss_5 = mr.train(
+    train_loss_5, pre_train_loss_5 = mr.train(
         [input_ids[1].unsqueeze(0),pretrain_input_ids[1].unsqueeze(0)], 
         [labels_1,pretrain_labels[1].unsqueeze(0)], 
         criterion=[ActorLoss(),PretrainLoss()], 
         loss_weights=[1,2],
         attention_mask = [None,None],
-        step_interval=999).item()
+        step_interval=999)
+    loss_5 = weighted_loss(train_loss_5.item(),pre_train_loss_5.item(),[1,2])
     set_seed(1234)
-    loss_6 = mr.train(
+    train_loss_6,pre_train_loss_6 = mr.train(
         [input_ids,pretrain_input_ids], 
         [labels,pretrain_labels], 
         criterion=[ActorLoss(),PretrainLoss()], 
         step_interval=999,
         loss_weights=[1,2],
         attention_mask = [None,None],
-        micro_batch_size=1,
-        debug=True).item()
+        micro_batch_size=[1,1],
+        debug=True)
+    loss_6 = weighted_loss(train_loss_6.item(),pre_train_loss_6.item(),[1,2])
+    print(loss_4)
+    print(loss_5)
+    print(loss_6)
+    print((loss_5 + loss_4) / 2)
+
     assert round(loss_6,5) == round((loss_5 + loss_4) / 2 ,5)

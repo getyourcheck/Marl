@@ -31,7 +31,8 @@ from ..config_consts import *
 from .generate_utils import(
     get_question_answer_mask, 
     partition_by_micro_batch_size, 
-    partition_list_by_micro_batch_size
+    partition_list_by_micro_batch_size,
+    merge_loss_list
 )
 
 DEFAULT_NEW_TOKENS = 64
@@ -148,14 +149,14 @@ class HfModelRunner:
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[list[float]] = None,
         **_ignored,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """
         criterion: _Loss class, e.g., torch.nn.CrossEntropyLoss()
         """
         if isinstance(input_ids, torch.Tensor):
             print(f"[{self.__class__.__name__}] self.compute_loss() for 1 input batch")
             loss = self.compute_loss_one(input_ids, labels, attention_mask, criterion)
-            return loss
+            return loss, None
         elif type(input_ids) == list:  # multiple inputs grouped to compute loss
             # https://stackoverflow.com/questions/53994625/how-can-i-process-multi-loss-in-pytorch
             print(f"[{self.__class__.__name__}] self.compute_loss() for  input batches")
@@ -167,15 +168,17 @@ class HfModelRunner:
                 == len(loss_weights)
             ), f"{len(input_ids)} {len(labels)} {len(criterion)} {len(attention_mask)} {len(loss_weights)} must equal"
             loss_cache = [0 for _ in range(len(input_ids))]
+            origin_loss = [0 for _ in range(len(input_ids))]
             loss_weights = [x / float(len(loss_weights)) for x in loss_weights]  # to 1
 
             for i in range(len(input_ids)):
                 loss = self.compute_loss_one(
                     input_ids[i], labels[i], attention_mask[i], criterion[i]
                 )
+                origin_loss[i] = loss
                 loss_cache[i] = loss * loss_weights[i]
             loss_sum = sum(loss_cache)
-            return loss_sum
+            return loss_sum, origin_loss
         else:
             raise NotImplementedError
 
@@ -252,14 +255,15 @@ class HfModelRunner:
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[Union[list[float], float]] = None,
         step_interval: int = 1,
-        micro_batch_size: Optional[int] = -1,
+        micro_batch_size: Optional[Union[list[int],int]] = None,
         debug=False,
         **_ignored,
     ):
+        weighted_loss, origin_loss = None, None
         print(f"[{self.__class__.__name__}] self.train()")
-        loss = 0
-        if micro_batch_size < 0:
-            loss = self.compute_loss(
+        # loss = 0
+        if micro_batch_size == None:
+            weighted_loss, origin_loss = self.compute_loss(
                 input_ids, labels, attention_mask, criterion, loss_weights
             )
         elif isinstance(input_ids, torch.Tensor):
@@ -269,16 +273,17 @@ class HfModelRunner:
                 input_ids_mb = micro_batche["input_ids"]
                 attention_mask_mb = micro_batche["attention_mask"]
                 labels_mb = micro_batche["labels"]
-                loss = self.compute_loss(
+                weighted_loss_mb, _ = self.compute_loss(
                     input_ids_mb, labels_mb, attention_mask_mb, criterion, loss_weights
                 )
-                losses.append(loss)
+                losses.append(weighted_loss_mb)
                 if debug:
                     set_seed(1234)
-            loss = sum(losses) / len(losses)
+            weighted_loss = sum(losses) / len(losses)
         elif isinstance(input_ids, list):   
             micro_batches = partition_list_by_micro_batch_size(input_ids, micro_batch_size, labels, attention_mask, loss_weights)
-            losses = []
+            loss_list_mb = []
+            origin_loss_list_mb = []
             for micro_batche in micro_batches:
                 input_ids_mb=[]
                 attention_mask_mb=[]
@@ -289,15 +294,20 @@ class HfModelRunner:
                     attention_mask_mb.append(micro_batche[i]["attention_mask"])
                     labels_mb.append(micro_batche[i]["labels"])
                     loss_weights_mb.append(micro_batche[i]["loss_weights"])
-                loss = self.compute_loss(
+                weighted_loss_mb, origin_loss_mb = self.compute_loss(
                     input_ids_mb, labels_mb, attention_mask_mb, criterion, loss_weights_mb
                 )
-                losses.append(loss)
+                loss_list_mb.append(weighted_loss_mb)
+                origin_loss_list_mb.append(origin_loss_mb)
                 if debug:
                     set_seed(1234)
-                loss = sum(losses) / len(losses)
-        self.backward_step(loss, step_interval)
-        return loss
+            origin_loss = merge_loss_list(origin_loss_list_mb)
+            weighted_loss = sum(loss_list_mb) / len(loss_list_mb)
+
+        self.backward_step(weighted_loss, step_interval)
+        if origin_loss != None:
+            return origin_loss
+        return weighted_loss
 
     # Inference
     @torch.no_grad()

@@ -104,14 +104,17 @@ assert loss1a_ray == loss1a
 
 # < reproduce loss1c multiple loss test on ray>
 mra.set_seed(1234)
-loss1c_ray = mra.train(
+loss_weights=[1.0, 1.0]
+loss1c_ray_train_loss,loss1c_ray_pretrain_loss = mra.train(
     input_ids=[input_ids_0, input_ids_1],
     labels=[input_ids_0, input_ids_1],
     attention_mask=[None, None],
     criterion=[None, None],
-    loss_weights=[1.0, 1.0],
+    loss_weights=loss_weights,
     step_interval=999,
 )
+loss_weights = [x / float(len(loss_weights)) for x in loss_weights]  # to 1
+loss1c_ray = loss1c_ray_train_loss * loss_weights[0] + loss1c_ray_pretrain_loss * loss_weights[1]
 print("[main] loss1c_ray", loss1a_ray)
 print("[main]", "loss1c_ray == loss1c", loss1c_ray == loss1c, "\n")
 assert loss1c_ray == loss1c

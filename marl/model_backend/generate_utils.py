@@ -83,14 +83,14 @@ def partition_label_by_micro_batch_size(
                 
 def partition_list_by_micro_batch_size(
     input_ids:list[torch.Tensor],
-    micro_batch_size: int,
+    micro_batch_size: list[int],
     labels: list[torch.Tensor],
     attention_mask:Optional[list[torch.Tensor]]=None,
     loss_weights: Optional[list[float]]=None,
 )->List[Dict]:
     length = len(input_ids)
     batch_size = input_ids[0].shape[0]
-    num_splits =  int(batch_size // micro_batch_size) + (batch_size % micro_batch_size > 0)
+    num_splits =  int(batch_size // micro_batch_size[0]) + (batch_size % micro_batch_size[0] > 0)
     micro_batches = [[{} for i in range(length)] for _ in range(num_splits)]
     if loss_weights == None:
         loss_weights = [None for _ in range(length)]
@@ -101,10 +101,22 @@ def partition_list_by_micro_batch_size(
         sub_attention_mask = attention_mask[i]
         sub_labels = labels[i]
         sub_loss_weights = loss_weights[i]
-        sub_micro_batches = partition_by_micro_batch_size(sub_input_ids,micro_batch_size,sub_attention_mask,sub_labels)
+        sub_micro_batches = partition_by_micro_batch_size(sub_input_ids,micro_batch_size[i],sub_attention_mask,sub_labels)
         for micro_batch_index ,sub_micro_batch in enumerate(sub_micro_batches):
             micro_batches[micro_batch_index][i]["input_ids"] = sub_micro_batch["input_ids"]
             micro_batches[micro_batch_index][i]["attention_mask"] = sub_micro_batch["attention_mask"]
             micro_batches[micro_batch_index][i]["labels"] = sub_micro_batch["labels"]
             micro_batches[micro_batch_index][i]["loss_weights"] = sub_loss_weights
     return micro_batches
+
+
+def merge_loss_list(loss_list_mb:list[list[torch.Tensor]]):
+    micro_batch_num = len(loss_list_mb)
+    loss_num = len(loss_list_mb[0])
+    loss_list = [i for i in range(loss_num)]
+    for loss_index in range(loss_num):
+        losses = []
+        for batch_index in range (micro_batch_num):
+            losses.append(loss_list_mb[batch_index][loss_index])
+        loss_list[loss_index] = sum(losses) / micro_batch_num
+    return loss_list

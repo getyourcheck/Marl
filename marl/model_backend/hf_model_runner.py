@@ -28,10 +28,15 @@ from .models.internlm2_reward import (
     InternLM2ForCriticModel,
 )
 from ..config_consts import *
-from .generate_utils import get_question_answer_mask
+from .generate_utils import(
+    get_question_answer_mask, 
+    partition_by_micro_batch_size, 
+    partition_list_by_micro_batch_size
+)
 
 DEFAULT_NEW_TOKENS = 64
 MAXIMUM_NEW_TOKENS = 1024
+
 
 """
 HfModelRunner can be individually called by other process
@@ -209,8 +214,8 @@ class HfModelRunner:
             shift_logits = shift_logits.view(-1, self.vocab_size)
             shift_labels = shift_labels.view(-1)
             shift_labels = shift_labels.to(shift_logits.device)  # enable model para
-            loss_fct = criterion()
-            loss = loss_fct(shift_logits, shift_labels)
+            # loss_fct = criterion()
+            loss = criterion(shift_logits, shift_labels)
         elif isinstance(labels, dict):
             # OPT. C) Use customized loss function, see loss/actor_loss.py
             logits: torch.Tensor = self.model(
@@ -247,21 +252,58 @@ class HfModelRunner:
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[Union[list[float], float]] = None,
         step_interval: int = 1,
+        micro_batch_size: Optional[int] = -1,
+        debug=False,
         **_ignored,
     ):
         print(f"[{self.__class__.__name__}] self.train()")
-        loss = self.compute_loss(
-            input_ids, labels, attention_mask, criterion, loss_weights
-        )
+        loss = 0
+        if micro_batch_size < 0:
+            loss = self.compute_loss(
+                input_ids, labels, attention_mask, criterion, loss_weights
+            )
+        elif isinstance(input_ids, torch.Tensor):
+            micro_batches = partition_by_micro_batch_size(input_ids,micro_batch_size,attention_mask,labels)
+            losses = []
+            for micro_batche in micro_batches:
+                input_ids_mb = micro_batche["input_ids"]
+                attention_mask_mb = micro_batche["attention_mask"]
+                labels_mb = micro_batche["labels"]
+                loss = self.compute_loss(
+                    input_ids_mb, labels_mb, attention_mask_mb, criterion, loss_weights
+                )
+                losses.append(loss)
+                if debug:
+                    set_seed(1234)
+            loss = sum(losses) / len(losses)
+        elif isinstance(input_ids, list):   
+            micro_batches = partition_list_by_micro_batch_size(input_ids, micro_batch_size, labels, attention_mask, loss_weights)
+            losses = []
+            for micro_batche in micro_batches:
+                input_ids_mb=[]
+                attention_mask_mb=[]
+                labels_mb=[]
+                loss_weights_mb=[]
+                for i in range(len(micro_batche)):
+                    input_ids_mb.append(micro_batche[i]["input_ids"])
+                    attention_mask_mb.append(micro_batche[i]["attention_mask"])
+                    labels_mb.append(micro_batche[i]["labels"])
+                    loss_weights_mb.append(micro_batche[i]["loss_weights"])
+                loss = self.compute_loss(
+                    input_ids_mb, labels_mb, attention_mask_mb, criterion, loss_weights_mb
+                )
+                losses.append(loss)
+                if debug:
+                    set_seed(1234)
+                loss = sum(losses) / len(losses)
         self.backward_step(loss, step_interval)
         return loss
 
     # Inference
     @torch.no_grad()
-    def infer(
+    def _infer(
         self,
         inputs: Union[torch.Tensor, list[dict], list[list[dict]]],
-        batch_size: Optional[int] = -1,
         tokenizer=None,  # reward model may use tokenizer in inference
         attention_mask=None,
         output_logprobs=False,
@@ -374,27 +416,49 @@ class HfModelRunner:
             output["logprobs"] = logpy_shift_right_byone
         return output
 
+    @torch.no_grad()
+    def infer(
+        self,
+        inputs: Union[torch.Tensor, list[dict], list[list[dict]]],
+        micro_batch_size: Optional[int] = -1,
+        tokenizer=None,  # reward model may use tokenizer in inference
+        attention_mask=None,
+        output_logprobs=False,
+        output_logits=True,
+        output_attentions=False,
+        output_hidden_states=False,
+        infer_kwargs: Optional[dict] = {},
+        debug = False,
+        **_ignored,
+    ) -> PolicyOutput:
+        if (not isinstance(inputs, torch.Tensor)) or micro_batch_size < 0:
+            return self._infer(inputs,tokenizer,attention_mask,output_logprobs,output_logits,
+                               output_attentions,output_hidden_states,infer_kwargs)
+        micro_batches = partition_by_micro_batch_size(inputs,micro_batch_size,attention_mask)
+        policy_outputs = []
+        for micro_batche in micro_batches:
+            input_ids_mb = micro_batche["input_ids"]
+            attention_mask_mb = micro_batche["attention_mask"]
+            policy_output_mb = self._infer(input_ids_mb,tokenizer,attention_mask_mb,output_logprobs,output_logits,
+                               output_attentions,output_hidden_states,infer_kwargs)
+            policy_outputs.append(policy_output_mb)
+            if debug:
+                self.set_seed(1234)
+        return concat_policy_outputs(policy_outputs) 
+
     # Generate
     @torch.no_grad()
-    def generate(
+    def _generate(
         self,
-        inputs: Union[torch.Tensor, str, list[str]],
-        batch_size: Optional[int] = -1,
+        input_ids: torch.Tensor,
         attention_mask=None,
         step=-1,
         output_str=True,
         output_logits=False,
         output_attentions=False,
         output_hidden_states=False,
-        chat_template=None,
         generate_kwargs: Optional[dict] = {},
-        **_ignored,
     ) -> PolicyOutput:
-        print(f"[{self.__class__.__name__}] self.generate() kwargs: {generate_kwargs}")
-        input_ids: torch.Tensor = self.tokenize_str_input(
-            inputs=inputs, chat_template=chat_template
-        )
-        assert isinstance(input_ids, torch.Tensor)
 
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             model = self.accelerator.unwrap_model(self.model)
@@ -451,6 +515,48 @@ class HfModelRunner:
 
         output.to("cpu")
         return output
+
+    # Generate
+    @torch.no_grad()
+    def generate(
+        self,
+        inputs: Union[torch.Tensor, str, list[str]],
+        micro_batch_size: Optional[int] = -1,
+        attention_mask=None,
+        step=-1,
+        output_str=True,
+        output_logits=False,
+        output_attentions=False,
+        output_hidden_states=False,
+        chat_template=None,
+        generate_kwargs: Optional[dict] = {},
+        debug = False,
+        **_ignored,
+    ) -> PolicyOutput:
+        print(f"[{self.__class__.__name__}] self.generate() kwargs: {generate_kwargs}")
+        input_ids: torch.Tensor = self.tokenize_str_input(
+            inputs=inputs, chat_template=chat_template
+        )
+        assert isinstance(input_ids, torch.Tensor)
+        if micro_batch_size < 0:
+            return self._generate(input_ids,attention_mask,step,output_str,output_logits,
+                                  output_attentions,output_hidden_states,generate_kwargs)
+        micro_batches = partition_by_micro_batch_size(input_ids,micro_batch_size,attention_mask)
+        policy_outputs = []
+        for micro_batche in micro_batches:
+            input_ids_mb = micro_batche["input_ids"]
+            attention_mask_mb = micro_batche["attention_mask"]
+            policy_output_mb = self._generate(input_ids_mb,attention_mask_mb,step,output_str,output_logits,
+                                  output_attentions,output_hidden_states,generate_kwargs)
+            policy_outputs.append(policy_output_mb)
+            if debug:
+                self.set_seed(1234)
+
+        padding_token_map={
+            "output_ids":self.tokenizer.pad_token_id,
+        }
+        return concat_policy_outputs(policy_outputs, padding_token_map=padding_token_map)
+
 
     def get_model(self):
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):

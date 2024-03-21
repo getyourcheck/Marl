@@ -139,7 +139,7 @@ class HfModelRunner:
         print(f"[{self.__class__.__name__}] __init__() done with train_kwargs.")
 
     # Training
-    def compute_loss(
+    def compute_loss_and_backward(
         self,
         input_ids: Union[list[torch.Tensor], torch.Tensor],
         labels: Optional[
@@ -154,12 +154,13 @@ class HfModelRunner:
         criterion: _Loss class, e.g., torch.nn.CrossEntropyLoss()
         """
         if isinstance(input_ids, torch.Tensor):
-            print(f"[{self.__class__.__name__}] self.compute_loss() for 1 input batch")
-            loss = self.compute_loss_one(input_ids, labels, attention_mask, criterion)
-            return loss, None
+            print(f"[{self.__class__.__name__}] self.compute_loss_and_backward() for 1 input batch")
+            loss = self.compute_loss(input_ids, labels, attention_mask, criterion)
+            loss.backward()
+            return loss, loss
         elif type(input_ids) == list:  # multiple inputs grouped to compute loss
             # https://stackoverflow.com/questions/53994625/how-can-i-process-multi-loss-in-pytorch
-            print(f"[{self.__class__.__name__}] self.compute_loss() for  input batches")
+            print(f"[{self.__class__.__name__}] self.compute_loss_and_backward() for  input batches")
             assert (
                 len(input_ids)
                 == len(labels)
@@ -172,17 +173,18 @@ class HfModelRunner:
             loss_weights = [x / float(len(loss_weights)) for x in loss_weights]  # to 1
 
             for i in range(len(input_ids)):
-                loss = self.compute_loss_one(
+                loss = self.compute_loss(
                     input_ids[i], labels[i], attention_mask[i], criterion[i]
                 )
                 origin_loss[i] = loss
                 loss_cache[i] = loss * loss_weights[i]
             loss_sum = sum(loss_cache)
+            loss_sum.backward()
             return loss_sum, origin_loss
         else:
             raise NotImplementedError
 
-    def compute_loss_one(
+    def compute_loss(
         self,
         input_ids: torch.Tensor,
         labels: Optional[Union[torch.Tensor, dict[str, torch.Tensor]]] = None,
@@ -235,15 +237,13 @@ class HfModelRunner:
             loss *= loss_weight
         return loss
 
-    def backward_step(self, loss: torch.Tensor, step_interval=1):
-        print(f"[{self.__class__.__name__}] self.backward_step()")
-        loss.backward()  # TODO: self.accelerator.backward(loss)
+    def parameter_update(self,step_interval=1):
+        print(f"[{self.__class__.__name__}] self.parameter_update()")
         self.step += 1
         if self.step % step_interval == 0:
             self.optimizer.step()
             self.lr_scheduler.step()
             self.optimizer.zero_grad()
-        return loss
 
     def train(
         self,
@@ -263,7 +263,7 @@ class HfModelRunner:
         print(f"[{self.__class__.__name__}] self.train()")
         # loss = 0
         if micro_batch_size == None:
-            weighted_loss, origin_loss = self.compute_loss(
+            weighted_loss, origin_loss = self.compute_loss_and_backward(
                 input_ids, labels, attention_mask, criterion, loss_weights
             )
         elif isinstance(input_ids, torch.Tensor):
@@ -273,7 +273,7 @@ class HfModelRunner:
                 input_ids_mb = micro_batche["input_ids"]
                 attention_mask_mb = micro_batche["attention_mask"]
                 labels_mb = micro_batche["labels"]
-                weighted_loss_mb, _ = self.compute_loss(
+                weighted_loss_mb, _ = self.compute_loss_and_backward(
                     input_ids_mb, labels_mb, attention_mask_mb, criterion, loss_weights
                 )
                 losses.append(weighted_loss_mb)
@@ -294,7 +294,7 @@ class HfModelRunner:
                     attention_mask_mb.append(micro_batche[i]["attention_mask"])
                     labels_mb.append(micro_batche[i]["labels"])
                     loss_weights_mb.append(micro_batche[i]["loss_weights"])
-                weighted_loss_mb, origin_loss_mb = self.compute_loss(
+                weighted_loss_mb, origin_loss_mb = self.compute_loss_and_backward(
                     input_ids_mb, labels_mb, attention_mask_mb, criterion, loss_weights_mb
                 )
                 loss_list_mb.append(weighted_loss_mb)
@@ -304,7 +304,7 @@ class HfModelRunner:
             origin_loss = merge_loss_list(origin_loss_list_mb)
             weighted_loss = sum(loss_list_mb) / len(loss_list_mb)
 
-        self.backward_step(weighted_loss, step_interval)
+        self.parameter_update(step_interval)
         if origin_loss != None:
             return origin_loss
         return weighted_loss

@@ -57,7 +57,7 @@ def test_generate():
     trainer_config = Config(
         dict(
             model_path="internlm/internlm2-chat-1_8b-sft",
-            torch_dtype=torch.float16,
+            torch_dtype=torch.bfloat16,
             model_type="actor",
             trainer_type=ENGINE_HUGGINGFACE,
             train_kwargs=dict(
@@ -80,6 +80,7 @@ def test_generate():
     runner = HfModelRunner(model_config=trainer_config)
     runner.initialize()
     input_strs = ["你好", "请提供三个管理时间的建议。"]
+    input_strs = [[{"role": "user", "content": input_str}] for input_str in input_strs]
     generate_kwargs = {
         "do_sample": True,
         "temperature": 1.0,
@@ -91,47 +92,45 @@ def test_generate():
         "eos_token_id": 92542,
         "pad_token_id": 0,
     }
-    meta_instruction = """You are an AI assistant whose name is InternLM (书生·浦语).
-- InternLM (书生·浦语) is a conversational language model that is developed by Shanghai AI Laboratory (上海人工智能实验室). It is designed to be helpful, honest, and harmless.
-- InternLM (书生·浦语) can understand and communicate fluently in the language chosen by the user such as English and 中文"""
 
-    chat_template = ""
-    chat_template += "{{ bos_token }}"
-    chat_template += "{{'<|im_start|>system\n" + meta_instruction + "<|im_end|>\n'}}"
-    chat_template += "{% for message in messages %}"
-    chat_template += "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
-    chat_template += "{% endfor %}"
-    chat_template += "{% if add_generation_prompt %}"
-    chat_template += "{{ '<|im_start|>assistant\n' }}{% endif %}"
     policy_output = runner.generate(
         input_strs,
         step=256,
         output_logits=False,
         output_str=True,
-        chat_template=chat_template,
         generate_kwargs=generate_kwargs,
     )
     output_ids = policy_output.output_ids
     question_mask = policy_output.question_mask
     answer_mask = policy_output.answer_mask
-    expected = [
-        "你好，有什么可以帮助你的吗？",
-        """好的，以下是三条关于管理时间的建议：
 
-1. 制定计划：每天开始之前，列出您需要完成的任务和目标，并根据重要性和优先级安排优先级。根据截止日期的截止时间来安排时间表，并遵循计划。
+    expected_hello = "非常好，有什么需要帮助的吗？"
+    if "V100" in torch.cuda.get_device_name(0):
+        expected_advice = """以下是三个管理时间的建议：
 
-2. 确定优先事项：将任务分为紧急和重要、紧急且重要、重要但不紧急、紧急但不重要、既不紧急也不重要的五个类别。然后按照重要性对任务进行排序，优先完成重要且紧急或重要但不紧急的任务。
+1. 制定计划和时间表：在开始一天之前，制定一个计划和时间表，列出您要完成的任务和优先级，以便您可以更好地组织您的时间和资源，并在一天结束时回顾您的计划。
 
-3. 管理时间：不要在一项任务上花费过多时间，避免浪费太多时间在低优先级任务上。尝试避免多任务处理，而是专注于一项任务直到完成。另外，利用工具和技术，如番茄钟、待办事项应用程序等，可以帮助您更好地管理时间并提高生产力。""",
-    ]
+2. 学会说“不”：学会拒绝一些不必要的任务和活动，以确保您的时间得到更好地利用。这不仅可以帮助您减少压力，还可以确保您有足够的时间来完成最重要的任务。
+
+3. 减少分心：避免分心，专注于您正在做的事情，这将帮助您更快地完成任务。关闭电子邮件通知、社交媒体和其他不必要的通知，以便您可以更好地集中注意力。"""
+    else:
+        expected_advice = """好的，以下是三个关于管理时间的建议：
+
+1. 制定计划和时间表： 计划是管理时间的重要组成部分，可以帮助您确定每项任务的重要性和优先级，并帮助您更好地安排时间。制定计划和时间表可以帮助您更好地掌控时间，确保您有足够的时间来完成任务，同时避免浪费时间和任务。
+
+2. 设定优先级： 在制定计划和时间表中，应该根据任务的重要性和紧急程度设定优先级。将任务分为紧急且重要、紧急但不重要、重要但不紧急和不重要不紧急四个类别，并根据重要性确定优先级。这有助于您更好地利用时间，确保最重要和最紧急的任务得到优先处理。
+
+3. 学会拒绝： 有时候，我们会被别人请求帮助或任务安排所迫，导致我们不能完成任务。要学会拒绝别人的请求，以便您有更多的时间来完成自己的任务。学会说“不”是一种很重要的技能，可以帮助您更好地掌控自己的时间，确保您有足够的时间来完成任务，并避免将时间浪费在不必要的事情上。"""
+    expected = [expected_hello, expected_advice]
+    
     input_strs = [
         tokenizer.apply_chat_template(
-            [{"role": "user", "content": input}],
+            input_str,
             tokenize=False,
-            chat_template=chat_template,
             add_generation_prompt=True,
+            return_tensors="pt"
         )
-        for input in input_strs
+        for input_str in input_strs
     ]
     input_ids = tokenizer(input_strs, return_tensors="pt", padding=True).input_ids
     question_len = input_ids.shape[-1]

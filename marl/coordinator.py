@@ -1,5 +1,5 @@
 import ray
-from .model_server import ModelServer
+from .model_server import BaseModelServer
 from .config_utils import get_resource_requirement
 from pathlib import Path
 ROOT_PATH = Path(__file__).parents[1].resolve()
@@ -30,8 +30,8 @@ class Coordinator:
             self.context_type = "server"
             self.context = ray_context
 
-    def create_models(self) -> dict[str, ModelServer]:
-        self.model_dict = { model_name: ModelServer(model_name, model_config)
+    def create_models(self) -> dict[str, BaseModelServer]:
+        self.model_dict = { model_name: BaseModelServer(model_name, model_config)
             for model_name, model_config in self.model_configs.items()
         }
         self._schedule()

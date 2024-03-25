@@ -101,8 +101,12 @@ class HfModelRunner:
         assert parallel["tensor"]["size"] == 1  # TODO: support TP
         assert parallel["pipeline"]["size"] == 1  # TODO: support PP
         self.step = 0
-        if "mode" in parallel["data"] and parallel["data"]["mode"] == "fsdp":
+        if parallel["data"].get("mode") == ENGINE_PLUGIN_FSDP:
             self.accelerator = Accelerator(fsdp_plugin=FullyShardedDataParallelPlugin())
+        elif parallel["data"].get("mode") == ENGINE_PLUGIN_DEEPSPEED:
+            from accelerate import DeepSpeedPlugin
+            ds_config = self.model_config["deepspeed_config"]  # requisite
+            self.accelerator = Accelerator(deepspeed_plugin=DeepSpeedPlugin(ds_config))
         else:
             self.accelerator = Accelerator()
 
@@ -569,9 +573,8 @@ class HfModelRunner:
 
 
     def get_model(self):
-        if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
-            return self.accelerator.unwrap_model(self.model)
-        return self.model
+        _model = self.accelerator.unwrap_model(self.model)
+        return _model
 
     def set_seed(self, seed=None):
         set_seed(seed)

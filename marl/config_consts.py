@@ -10,3 +10,8 @@ MODEL_TYPE_CRITIC: str = "critic"
 ENGINE_HUGGINGFACE: str = "huggingface"
 ENGINE_INTERNEVO: str = "internevo"
 ENGINE_VLLM: str = "vllm"
+ENGINE_LMDEPLOY: str = "lmdeploy"
+
+# plugins for trainer engine (e.g., huggingface accelerate)
+ENGINE_PLUGIN_FSDP: str = "fsdp"
+ENGINE_PLUGIN_DEEPSPEED: str = "deepspeed"

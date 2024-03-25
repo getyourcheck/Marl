@@ -1,9 +1,9 @@
 import os
 import torch
 from typing import Optional
+from .cuda_memory_stats import CudaMemoryStats
+from .net_utils import get_ip_hostname, get_free_port, get_ip
 from .ray_actor_metadata import RayActorMetadata
-from .net_utils import get_ip_hostname, get_free_port
-
 
 class RayActorMixin:
     def inject_distribute_env(
@@ -44,14 +44,16 @@ class RayActorMixin:
     def get_free_port(self):
         return get_free_port()
 
-    def get_memory_stats_of_visible_devices(self):
-        memory_stats = {}
+    def get_memory_stats_of_visible_devices(self) -> CudaMemoryStats:
         visible_gpu_ids = []
         if "CUDA_VISIBLE_DEVICES" in os.environ:
             visible_gpu_ids = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
         else:
             visible_gpu_ids = [str(index) for index in range(torch.cuda.device_count())]
+
+        cuda_memory_stats = CudaMemoryStats()
         for index, gpu_id in enumerate(visible_gpu_ids):
             status = torch.cuda.memory_stats(device=index)
-            memory_stats[gpu_id] = status
-        return memory_stats
+            node_ip = get_ip()
+            cuda_memory_stats[f"ip{node_ip}-gpu{gpu_id}"] = status
+        return cuda_memory_stats

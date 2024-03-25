@@ -2,12 +2,14 @@ import ray
 from transformers import AutoTokenizer
 from typing import Optional
 
-from .model_backend import HfModelRunnerRayActorGroup
-from .tokenizer.tokenizer_utils import get_tokenizer
-from .config_consts import *
+from typing import Optional, Union
+import torch
+from ..model_backend import HfModelRunnerRayActorGroup
+from ..tokenizer.tokenizer_utils import get_tokenizer
+from ..config_consts import *
 
 
-class ModelServer:
+class BaseModelServer:
     # Initialize
     def __init__(self, model_name: str, model_config: dict):
         self.model_name = model_name
@@ -31,16 +33,14 @@ class ModelServer:
         trainer_config["model_path"] = model_path
         trainer_config["model_type"] = model_type
         trainer_config["tokenizer_path"] = tokenizer_path
-        trainer_type = trainer_config.get("trainer_type", ENGINE_HUGGINGFACE).lower()
-        if trainer_type == ENGINE_HUGGINGFACE:
+        if self.trainer_type == ENGINE_HUGGINGFACE:
             self.trainer = HfModelRunnerRayActorGroup(
                 name=f"{self.model_name}_trainer", config=trainer_config
             )
-        elif trainer_type == ENGINE_INTERNEVO:
-            raise NotImplementedError(f"{generator_type}.")
+        elif self.trainer_type == ENGINE_INTERNEVO:
+            raise NotImplementedError(f"{self.trainer_type}.")
         else:
-            raise ValueError(f"No trainer is registered with type '{trainer_type}'.")
-        self.model_ref = self.trainer.get_model()  # an reference
+            raise ValueError(f"No trainer is registered with type '{self.trainer_type}'.")
 
         # Tokenizer is initialized in ModelServer (not ModelTrainer) to avoid remote call
         # FIXME: os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -54,18 +54,15 @@ class ModelServer:
             if shared_with_trainer:
                 self.generator = self.trainer
             else:
-                generator_type: str = generator_config.get(
-                    "generator_type", ENGINE_HUGGINGFACE
-                ).lower()
-                if generator_type == ENGINE_HUGGINGFACE:
+                if self.generator_type == ENGINE_HUGGINGFACE:
                     self.generator = HfModelRunnerRayActorGroup(
                         f"{self.model_name}_generator", generator_config
                     )
-                elif generator_type == ENGINE_VLLM:
-                    raise NotImplementedError(f"{generator_type}.")
+                elif self.generator_type == ENGINE_VLLM:
+                    raise NotImplementedError(f"{self.generator_type}.")
                 else:
                     raise ValueError(
-                        f"No generator is registered with type '{generator_type}'."
+                        f"No generator is registered with type '{self.generator_type}'."
                     )
 
         self.is_initialized = True
@@ -77,7 +74,23 @@ class ModelServer:
     def generator_eq_trainer(self):
         return id(self.generator) == id(self.trainer)
 
+    @property
+    def trainer_type(self):
+        trainer_config = self.model_config["trainer_config"]
+        trainer_type: str = trainer_config.get("trainer_type")
+        return trainer_type.lower() if trainer_type is not None else trainer_type
+
+    @property
+    def generator_type(self):
+        generator_config: dict = self.model_config.get("generator_config")
+        if generator_config is None:
+            return None
+        generator_type: str = generator_config.get("generator_type")
+        return generator_type.lower() if generator_type is not None else generator_type
+
     def model_get(self):
+        if not self.model_ref:
+            self.model_ref = self.trainer.get_model()  # an reference
         return ray.get(self.model_ref, timeout=600.0)  # 10min timeout
 
     # Training
@@ -92,19 +105,25 @@ class ModelServer:
         return self.trainer.train_get(object_refs, timeout=timeout)
 
     def train(self, input_ids, labels=None, attention_mask=None, *args, **train_kwargs):
-        return self.trainer.train(
+        object_refs = self.train_async(
             input_ids, labels, attention_mask, *args, **train_kwargs
         )
+        return self.train_get(object_refs)
 
     # Inference
     def infer_async(self, inputs, *args, **infer_kwargs):
+        if self.trainer_type == ENGINE_DEEPSPEED:
+            return self.trainer.fit()
         return self.trainer.infer_async(inputs, *args, **infer_kwargs)
 
     def infer_get(self, object_refs, timeout: Optional[float] = None):
+        if self.trainer_type == ENGINE_DEEPSPEED:
+            return object_refs
         return self.trainer.infer_get(object_refs, timeout=timeout)
 
     def infer(self, inputs, *args, **infer_kwargs):
-        return self.trainer.infer(inputs, *args, **infer_kwargs)
+        object_refs = self.infer_async(inputs, *args, **infer_kwargs)
+        return self.infer_get(object_refs)
 
     # Generation
     def generate_async(self, inputs, *args, **generate_kwargs):
@@ -114,13 +133,20 @@ class ModelServer:
         return self.generator.generate_get(object_refs, timeout=timeout)
 
     def generate(self, inputs, *args, **generate_kwargs):
-        return self.generator.generate(inputs, *args, **generate_kwargs)
+        object_refs = self.generate_async(inputs, *args, **generate_kwargs)
+        return self.generate_get(object_refs)
 
     # Others
     def set_seed(self, seed: int = None):
         self.trainer.set_seed(seed)
         if not self.generator_eq_trainer:
             self.generator.set_seed(seed)
+
+    def clean_up(self):
+        self.trainer.release_resources()
+        if not self.generator_eq_trainer:
+            self.generator.release_resources()
+        print(f"[{self.__class__.__name__}] {self.model_name} is destroyed.")
 
     def _load_chat_template(self, chat_template):
         # adopted from: https://github.com/vllm-project/vllm/blob/0e163fce18594c7e29dc5a143dd6b33d213fcbf3/vllm/entrypoints/openai/serving_chat.py#L245
@@ -141,3 +167,43 @@ class ModelServer:
             )
         else:
             print("[WARNING] No chat template provided. Chat API will not work.")
+
+    def tokenize_str_input(
+        self,
+        inputs: Union[list[str], str],
+        chat_template: str = None,
+    ) -> torch.Tensor:
+        if isinstance(inputs, torch.Tensor):
+            return inputs
+        elif isinstance(inputs, str):
+            if chat_template != None:
+                inputs = self.tokenizer.apply_chat_template(
+                    [{"role": "user", "content": inputs}],
+                    tokenize=False,
+                    chat_template=chat_template,
+                    add_generation_prompt=True,
+                )
+            input_strs = inputs
+        elif isinstance(inputs, list):
+            topping = inputs[0]
+            if isinstance(topping, torch.Tensor):
+                print(f"[{self.__class__.__name__}] Cat list[torch.Tensor]: {inputs}")
+                return torch.cat(inputs, dim=0)
+            if not isinstance(topping, str):
+                raise TypeError(f"Unsupported type: type({topping}) inputs({inputs})")
+            if chat_template != None:
+                inputs = [
+                    self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": input}],
+                        tokenize=False,
+                        chat_template=chat_template,
+                        add_generation_prompt=True,
+                    )
+                    for input in inputs
+                ]
+            input_strs = inputs
+        else:
+            raise NotImplementedError(f"Unsupported type {type(inputs)}:", inputs)
+        print(f"[{self.__class__.__name__}] encode string input into input_ids ...")
+        output = self.tokenizer(input_strs, return_tensors="pt", padding=True)
+        return output.input_ids

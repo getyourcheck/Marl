@@ -14,7 +14,7 @@ actor = dict(
             loss_type="per_token",
         ),
         parallel=dict(
-            data=dict(size=2, mode="ddp"),
+            data=dict(size=1, mode="ddp"),
             tensor=dict(size=1, mode="1d"),
             pipeline=dict(size=1, interleaved_overlap=False),
             sequence=False,

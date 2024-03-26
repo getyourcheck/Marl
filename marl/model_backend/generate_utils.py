@@ -40,7 +40,7 @@ def partition_by_micro_batch_size(
 ) -> list[dict[str, torch.Tensor]]:
     micro_batches: list[dict[str, torch.Tensor]] = []
     batch_size = input_ids.shape[0]
-    if micro_batch_size <= 0:
+    if micro_batch_size <= 0 or batch_size == micro_batch_size:
         micro_batch = {}
         micro_batch["input_ids"] = input_ids
         micro_batch["attention_mask"] = attention_mask

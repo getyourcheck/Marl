@@ -41,3 +41,11 @@ def get_resource_requirement(model_configs: dict) -> dict:
 
     resources['num_cpus'] = resources['num_gpus'] * 10
     return resources
+
+def get_dp_size(trainer_config: dict) -> int:
+    dp_size = 1
+    if "parallel" in trainer_config:
+        parallel = trainer_config["parallel"]
+        data = parallel.get("data", {"size": 1})
+        dp_size = data['size']
+    return dp_size

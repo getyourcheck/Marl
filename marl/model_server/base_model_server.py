@@ -1,9 +1,8 @@
 import ray
-from transformers import AutoTokenizer
-from typing import Optional
-
-from typing import Optional, Union
 import torch
+import marl.utils as marl_util
+from transformers import AutoConfig
+from typing import Optional
 from ..model_backend import HfModelRunnerRayActorGroup
 from ..tokenizer.tokenizer_utils import get_tokenizer
 from ..config_consts import *
@@ -25,14 +24,22 @@ class BaseModelServer:
 
     def initialize(self):
         model_path: str = self.model_config["model_path"]  # requisite
-        model_type: str = self.model_config["model_type"]  # requisite
+        self.model_type: str = self.model_config["model_type"]  # requisite
+        if self.model_type == MODEL_TYPE_REWARD:
+            temp_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+            self.reward_token_id = temp_config.reward_token_id
         trainer_config: dict = self.model_config["trainer_config"]  # requisite
         generator_config: dict = self.model_config.get("generator_config")  # optional
         tokenizer_path: str = self.model_config.get("tokenizer_path", model_path)  # opt
 
         trainer_config["model_path"] = model_path
-        trainer_config["model_type"] = model_type
+        trainer_config["model_type"] = self.model_type
         trainer_config["tokenizer_path"] = tokenizer_path
+        # Tokenizer is initialized in ModelServer (not ModelTrainer) to avoid remote call
+        # FIXME: os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        self.tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
+        trainer_config["tokenizer_pad_token_id"] = self.tokenizer.pad_token_id
+
         if self.trainer_type == ENGINE_HUGGINGFACE:
             self.trainer = HfModelRunnerRayActorGroup(
                 name=f"{self.model_name}_trainer", config=trainer_config
@@ -40,11 +47,7 @@ class BaseModelServer:
         elif self.trainer_type == ENGINE_INTERNEVO:
             raise NotImplementedError(f"{self.trainer_type}.")
         else:
-            raise ValueError(f"No trainer is registered with type '{self.trainer_type}'.")
-
-        # Tokenizer is initialized in ModelServer (not ModelTrainer) to avoid remote call
-        # FIXME: os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        self.tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
+            raise ValueError(f"No trainer is registered with type: {self.trainer_type}")
 
         self.generator = self.trainer  # use trainer for self.generate() by default
         if generator_config is not None:  # optional
@@ -111,8 +114,18 @@ class BaseModelServer:
         return self.train_get(object_refs)
 
     # Inference
-    def infer_async(self, inputs, *args, **infer_kwargs):
-        return self.trainer.infer_async(inputs, *args, **infer_kwargs)
+    def infer_async(self, inputs, attention_mask=None, *args, **infer_kwargs):
+        if not isinstance(inputs, torch.Tensor):
+            input_ids, attention_mask = marl_util.encode(inputs, self.tokenizer)
+            if self.model_type == MODEL_TYPE_REWARD:
+                input_ids, attention_mask = marl_util.expand_reward_token_id(
+                    self.reward_token_id, input_ids, attention_mask
+                )
+        else:
+            input_ids = inputs
+        return self.trainer.infer_async(
+            input_ids=input_ids, attention_mask=attention_mask, *args, **infer_kwargs
+        )
 
     def infer_get(self, object_refs, timeout: Optional[float] = None):
         return self.trainer.infer_get(object_refs, timeout=timeout)
@@ -122,8 +135,18 @@ class BaseModelServer:
         return self.infer_get(object_refs)
 
     # Generation
-    def generate_async(self, inputs, *args, **generate_kwargs):
-        return self.generator.generate_async(inputs, *args, **generate_kwargs)
+    def generate_async(self, inputs, attention_mask=None, *args, **generate_kwargs):
+        if isinstance(inputs, torch.Tensor):
+            input_ids = inputs
+        elif isinstance(inputs, list):
+            input_ids, attention_mask = marl_util.encode(
+                inputs, self.tokenizer, add_generation_prompt=True
+            )
+        else:
+            raise NotImplementedError(f"unknown inputs: {inputs}")
+        return self.generator.generate_async(
+            input_ids=input_ids, attention_mask=attention_mask, *args, **generate_kwargs
+        )
 
     def generate_get(self, object_refs, timeout: Optional[float] = None):
         return self.generator.generate_get(object_refs, timeout=timeout)

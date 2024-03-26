@@ -25,7 +25,7 @@ if __name__ == "__main__":
         # "sft_data_filename": "data/config/1.8B_sft.json",
         # "ppo_data_filename": "data/config/task_ppo.json",
         # "sft_data_filename": "data/config/task_sft.json",
-        "num_samples_each_epoch": 16,
+        "num_samples_each_epoch": 512,
         # "sft_data_samples": 2,
         "tokenizer": tokenizer,
         "max_seq_len": 4096,
@@ -35,7 +35,7 @@ if __name__ == "__main__":
     # init model
     cluster_address = "auto"
     print(f"cluster_address={cluster_address}")
-    model_configs_path = "projects/ppo/internlm2/1B/four_model_4gpu.py"
+    model_configs_path = "projects/ppo/internlm2/1B/four_model_48gpu.py"
     model_configs = Config.from_file(model_configs_path)
     coordinator = Coordinator(cluster_address, model_configs)
     model_dict = coordinator.create_models()
@@ -51,9 +51,9 @@ if __name__ == "__main__":
     rl_repeater = BaseRepeater(sft_model=sft_model, reward_scale=False, fine_grained_rm=False, value_ema=False)
     # init trainer
     train_config = {
-        "ppo_minibatch": 16,
+        "ppo_minibatch": 512,
         "train_minibatch": 1,
-        "value_minibatch": 16
+        "value_minibatch": 512
     }
     ppo = PPOTrainer(policy_model=actor_model, value_model=None, train_cfg=train_config)
     
@@ -78,7 +78,7 @@ if __name__ == "__main__":
         logger_train.info(f"[Value Train] step: {step}, value loss: {value_loss}")
         pretrain_step -= 1
 
-        logger_rollout.info(f"generates: {trajectories.output_str}")
+        logger_rollout.debug(f"generates: {trajectories.output_str}")
         step += 1
         if step % 20 == 0:
             actor_model.save_model(f"/cpfs01/shared/public/llm_model/ckpt/test_0326/{step}/")

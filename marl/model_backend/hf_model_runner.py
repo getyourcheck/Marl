@@ -162,7 +162,7 @@ class HfModelRunner:
             )
             loss = self.compute_loss(input_ids, labels, attention_mask, criterion)
             loss /= gradient_accumulation_steps
-            loss.backward()
+            self.accelerator.backward(loss)
             return loss
 
         elif type(input_ids) == list:  # returns list[torch.Tensor]
@@ -187,7 +187,7 @@ class HfModelRunner:
                 loss_sum += loss * loss_weights[i]
                 loss_list[i] = loss
             loss_sum /= gradient_accumulation_steps
-            loss_sum.backward()
+            self.accelerator.backward(loss)
             return loss_list
 
         else:
@@ -590,7 +590,7 @@ from ray.util.placement_group import (
 from .ray_utils import create_ray_actors
 from .ray_actor_mixin import RayActorMixin
 from .ray_utils import DEFAULT_NUM_CPUS, DEFAULT_NUM_GPUS
-from ..config_utils import get_gpu_requirement
+from ..config_utils import get_gpu_requirement, get_dp_size
 from ..policy_output import concat_policy_outputs
 
 
@@ -612,6 +612,8 @@ class HfModelRunnerRayActorGroup:
     def __init__(self, name: str, config: dict):
         self.released = True
         num_gpus = get_gpu_requirement(config)
+        self.dp_size = get_dp_size(config)
+        self.tokenizer_pad_token_id = config.get("tokenizer_pad_token_id", 0)
         bundles = [
             {"CPU": DEFAULT_NUM_CPUS, "GPU": DEFAULT_NUM_GPUS} for _ in range(num_gpus)
         ]
@@ -642,8 +644,42 @@ class HfModelRunnerRayActorGroup:
         ray.get([actor.initialize.remote() for actor in self.ray_actors])
 
     # Training
-    def train_async(self, *args, **kwargs):
-        return [actor.train.remote(*args, **kwargs) for actor in self.ray_actors]
+    def train_async(self,input_ids, labels, attention_mask, *args, **kwargs):
+        if isinstance(input_ids, torch.Tensor):
+            micro_batch_size = input_ids.shape[0] // self.dp_size
+            micro_batches = partition_by_micro_batch_size(input_ids, micro_batch_size, attention_mask ,labels)
+            return [
+                self.ray_actors[index].train.remote(
+                    input_ids=micro_batch["input_ids"], 
+                    attention_mask = micro_batch["attention_mask"], 
+                    labels = micro_batch["labels"], 
+                    *args, **kwargs)
+                for index, micro_batch in enumerate(micro_batches)]
+        elif isinstance(input_ids, list):
+            micro_batch_size = [i for i in range(len(input_ids))]
+            for index, input_id in enumerate(input_ids):
+                micro_batch_size[index] = input_id[index].shape[0] // self.dp_size
+
+            micro_batches = partition_list_by_micro_batch_size(input_ids, self.dp_size, attention_mask ,labels)
+            object_refs = []
+            for index, micro_batch in enumerate(micro_batches):
+                input_ids_mb=[]
+                attention_mask_mb=[]
+                labels_mb=[]
+                loss_weights_mb=[]
+                for i in range(len(micro_batch)):
+                    input_ids_mb.append(micro_batch[i]["input_ids"])
+                    attention_mask_mb.append(micro_batch[i]["attention_mask"])
+                    labels_mb.append(micro_batch[i]["labels"])
+                    loss_weights_mb.append(micro_batch[i]["loss_weights"])
+            object_ref = self.ray_actors[index].train.remote(
+                    inputs=input_ids_mb, 
+                    attention_mask = attention_mask_mb, 
+                    labels = labels_mb, 
+                    loss_weights = loss_weights_mb,
+                    *args, **kwargs)
+            object_refs.append(object_ref)    
+            return object_ref
 
     def train_get(self, object_refs, timeout=None):
         losses = ray.get(object_refs, timeout=timeout)
@@ -654,8 +690,12 @@ class HfModelRunnerRayActorGroup:
         return self.train_get(object_refs)
 
     # Inference
-    def infer_async(self, *args, **kwargs):
-        return [actor.infer.remote(*args, **kwargs) for actor in self.ray_actors]
+    def infer_async(self, input_ids, attention_mask, *args, **kwargs):
+        micro_batch_size = input_ids.shape[0] // self.dp_size
+        micro_batches = partition_by_micro_batch_size(input_ids, micro_batch_size, attention_mask)
+        return [self.ray_actors[index].infer.remote(inputs=micro_batch["input_ids"], attention_mask =micro_batch["attention_mask"], *args, **kwargs) 
+                for index, micro_batch in enumerate(micro_batches)]
+
 
     def infer_get(self, object_refs, timeout=None):
         outputs = ray.get(object_refs, timeout=timeout)
@@ -666,12 +706,18 @@ class HfModelRunnerRayActorGroup:
         return self.infer_get(object_refs)
 
     # Generation
-    def generate_async(self, *args, **kwargs):
-        return [actor.generate.remote(*args, **kwargs) for actor in self.ray_actors]
+    def generate_async(self, input_ids, attention_mask, *args, **kwargs):
+        micro_batch_size = input_ids.shape[0] // self.dp_size
+        micro_batches = partition_by_micro_batch_size(input_ids, micro_batch_size, attention_mask)
+        return [self.ray_actors[index].generate.remote(inputs=micro_batch["input_ids"], attention_mask =micro_batch["attention_mask"], *args, **kwargs) 
+                for index, micro_batch in enumerate(micro_batches)]
+
 
     def generate_get(self, object_refs, timeout=None):
         outputs = ray.get(object_refs, timeout=timeout)
-        return concat_policy_outputs(outputs)
+        padding_token_map={"output_ids":self.tokenizer_pad_token_id}
+        return concat_policy_outputs(outputs,padding_token_map)
+
 
     def generate(self, *args, **kwargs):
         object_refs = self.generate_async(*args, **kwargs)

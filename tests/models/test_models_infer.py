@@ -25,6 +25,7 @@ MODELS = [
 @pytest.mark.parametrize("model", MODELS)
 @pytest.mark.parametrize("dtype", ["float"])
 @pytest.mark.parametrize("max_tokens", [128])
+# @pytest.mark.skip()
 def test_models(
     hf_runner,
     vllm_runner,
@@ -51,7 +52,7 @@ def test_models(
             hf_output_ids == vllm_output_ids
         ), f"Test{i}:\nHF: {hf_output_ids}\nvLLM: {vllm_output_ids}"
 
-
+# @pytest.mark.skip()
 def test_generate():
     set_seed(1234)
     trainer_config = Config(
@@ -186,3 +187,113 @@ def test_generate():
         answer_mask[1][question_len :],
         torch.ones(output_len - question_len, dtype=int, device=answer_mask.device),
     ), f"expected: {torch.ones(output_len - question_len, dtype=int)}\noutput: {answer_mask[1][question_len :]}"  # answer
+
+# @pytest.mark.skip()
+def test_actor_infer():
+    model_path = "internlm/internlm2-chat-1_8b-sft"
+    trainer_config = Config(
+        dict(
+            model_path=model_path,
+            torch_dtype=torch.bfloat16,
+            model_type="actor",
+            trainer_type=ENGINE_HUGGINGFACE,
+            parallel=dict(
+                data=dict(size=1),
+                tensor=dict(size=1, mode="1d"),
+                pipeline=dict(size=1, interleaved_overlap=False),
+            ),
+        ),
+    )
+    runner = HfModelRunner(model_config=trainer_config)
+    runner.initialize()
+
+    tokenizer = get_tokenizer(model_path, trust_remote_code=True)
+    tokenizer.pad_token = tokenizer.unk_token
+    input_strs=[
+        "两个黄鹂鸣翠柳",
+        "两个黄鹂鸣翠柳，一行白鹭上青天",
+    ]
+    test_data = tokenizer(input_strs, return_tensors="pt", padding=True)
+    input_ids = test_data.input_ids
+    attention_mask = test_data.attention_mask
+    set_seed(1234)
+    output_2dp = runner.infer(input_ids, attention_mask=attention_mask, output_logprobs=True)
+    logprobs_2dp = output_2dp["logprobs"]
+    target_logprobs = torch.tensor([[ 0.0, -21.431241989135742, -20.14888572692871, -17.017423629760742, -17.133790969848633,
+         -16.874755859375, -16.398357391357422, -15.948003768920898, -10.790029525756836, -4.2601799964904785,
+         -0.021629048511385918, -0.2825770080089569, -0.0010851691477000713, -0.0317404679954052],
+        [ 0.0, -10.790029525756836, -4.251300811767578, -0.019995778799057007, -0.30234798789024353,
+         -0.0009634620510041714, -0.027291228994727135, -0.13791579008102417, -0.45438435673713684, -0.04258473590016365,
+         -0.011445928364992142, -0.02277398109436035, -0.0014762704959139228, -0.017770949751138687]]).cuda()
+    assert torch.equal(logprobs_2dp,target_logprobs)
+
+
+# @pytest.mark.skip()
+def test_reward_infer():
+    model_path = "/cpfs01/shared/public/llm_model/ckpt/Luyou_1B/R-Luyou-1B-8k-D20240130-v1-hf/"
+    trainer_config = Config(
+        dict(
+            model_path=model_path,
+            torch_dtype=torch.bfloat16,
+            model_type="reward",
+            trainer_type=ENGINE_HUGGINGFACE,
+            parallel=dict(
+                data=dict(size=1),
+                tensor=dict(size=1, mode="1d"),
+                pipeline=dict(size=1, interleaved_overlap=False),
+            ),
+        ),
+    )
+    runner = HfModelRunner(model_config=trainer_config)
+    runner.initialize()
+    input_messages =[
+        [
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "非常好，有什么需要帮助的吗？"}
+        ],
+        [
+            {"role": "user", "content": "两个黄鹂鸣翠柳"},
+            {"role": "assistant", "content": "两个黄鹂鸣翠柳，一行白鹭上青天"}
+        ],
+    ]
+    set_seed(1234)
+    rm_out = runner.infer(input_messages)
+    rewards = rm_out.logits.cpu().squeeze(-1)
+    target_reward = torch.tensor([-1.78125, -1.453125])
+    assert torch.equal(rewards, target_reward)
+
+# @pytest.mark.skip()
+def test_critic_infer():
+    model_path = "/cpfs01/shared/public/llm_model/ckpt/Luyou_1B/R-Luyou-1B-8k-D20240130-v1-hf/"
+    trainer_config = Config(
+        dict(
+            model_path=model_path,
+            torch_dtype=torch.bfloat16,
+            model_type="critic",
+            trainer_type=ENGINE_HUGGINGFACE,
+            parallel=dict(
+                data=dict(size=1),
+                tensor=dict(size=1, mode="1d"),
+                pipeline=dict(size=1, interleaved_overlap=False),
+            ),
+        ),
+    )
+    runner = HfModelRunner(model_config=trainer_config)
+    runner.initialize()
+    tokenizer = get_tokenizer(model_path, trust_remote_code=True)
+    tokenizer.pad_token = tokenizer.unk_token
+    input_strs=[
+        "两个黄鹂鸣翠柳",
+        "两个黄鹂鸣翠柳，一行白鹭上青天",
+    ]
+    test_data = tokenizer(input_strs, return_tensors="pt", padding=True)
+    input_ids = test_data.input_ids
+    attention_mask = test_data.attention_mask
+    set_seed(1234)
+    value_output = runner.infer(input_ids.cuda(), attention_mask=attention_mask.cuda())
+    logits = value_output.logits
+    target_logits = torch.tensor([[-3.015625, -3.015625, -3.015625, -3.015625, -3.015625, -3.015625, -3.015625, -6.71875,
+         -2.25,  3.515625,  0.7578125,  0.67578125,  1.3359375,  1.390625],
+        [-6.71875, -2.265625,  3.5,  0.8046875,  0.73046875,  1.3359375,  1.3828125,  1.171875,
+          1.7421875,  3.953125,  3.453125,  1.53125,  0.53515625,  0.80078125]],dtype=torch.bfloat16).cuda()
+    assert torch.equal(logits, target_logits)

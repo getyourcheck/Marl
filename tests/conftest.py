@@ -92,7 +92,7 @@ class TorchRunner:
         if tokenizer_name is None:
             tokenizer_name = model_name
         self.tokenizer = get_tokenizer(tokenizer_name, trust_remote_code=True)
-        if optimizer != None:
+        if optimizer is not None:
             assert optimizer in _STR_OPTIMIZER_TO_TORCH_OPTIMIZER
             torch_optimizer = _STR_OPTIMIZER_TO_TORCH_OPTIMIZER[optimizer]
             self.optimizer = torch_optimizer(
@@ -143,7 +143,7 @@ class HfRunner:
         if tokenizer_name is None:
             tokenizer_name = model_name
         self.tokenizer = get_tokenizer(tokenizer_name, trust_remote_code=True)
-        if optimizer != None:
+        if optimizer is not None:
             assert optimizer in _STR_OPTIMIZER_TO_TORCH_OPTIMIZER
             torch_optimizer = _STR_OPTIMIZER_TO_TORCH_OPTIMIZER[optimizer]
             self.optimizer = torch_optimizer(

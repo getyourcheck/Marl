@@ -6,6 +6,7 @@ from marl.trainer.ppo import PPOTrainer
 from marl.coordinator import Coordinator
 from marl.config import Config
 import numpy as np
+import torch
 
 if __name__ == "__main__":
 
@@ -66,7 +67,7 @@ if __name__ == "__main__":
             print(f"[Policy Train] Step: {step}, ppo loss: {ppo_loss}, pretrain loss: {pt_loss}")
             print(f"[Policy Train] Step: {step}, kl: {trajectories.kl_distance}")
         
-        print(f"rewards: {trajectories.rewards.numpy()}")
+        print(f"rewards: {trajectories.rewards.to(torch.float).numpy()}")
 
         value_loss = ppo.value_learn(trajectories, critic_model)
         print(f"[Value Train] step: {step}, value loss: {value_loss}")

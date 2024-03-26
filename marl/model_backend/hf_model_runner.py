@@ -10,13 +10,6 @@ from transformers import (
     AutoModelForCausalLM,
     PreTrainedModel,
     get_scheduler as transformers_get_scheduler,
-    PreTrainedTokenizer,
-    PreTrainedTokenizerFast,
-)
-
-from transformers.modeling_outputs import (
-    CausalLMOutputWithPast,
-    SequenceClassifierOutputWithPast,
 )
 from transformers.generation.utils import GenerateDecoderOnlyOutput
 
@@ -28,13 +21,16 @@ from .models.internlm2_reward import (
     InternLM2ForCriticModel,
 )
 from ..config_consts import *
-from .generate_utils import(
-    get_question_answer_mask, 
-    partition_by_micro_batch_size, 
+from .generate_utils import (
+    get_question_answer_mask,
+    partition_by_micro_batch_size,
     partition_list_by_micro_batch_size,
-    merge_loss_list
+    merge_loss_list,
 )
+import marl.utils as marl_util
+from marl.logger import init_logger
 
+logger = init_logger(__name__)
 DEFAULT_NEW_TOKENS = 64
 MAXIMUM_NEW_TOKENS = 1024
 
@@ -61,9 +57,9 @@ class HfModelRunner:
 
         # 1. Model
         model_path = self.model_config.get("model_path")
-        model_type = self.model_config.get("model_type", "").lower()
+        self.model_type = self.model_config.get("model_type", "").lower()
         torch_dtype = self.model_config.get("torch_dtype", "auto")
-        if model_type == MODEL_TYPE_REWARD:
+        if self.model_type == MODEL_TYPE_REWARD:
             # TODO: support reward model from other classes
             self.model: PreTrainedModel = InternLM2ForRewardModel.from_pretrained(
                 pretrained_model_name_or_path=model_path,
@@ -72,7 +68,7 @@ class HfModelRunner:
                 trust_remote_code=True,
                 attn_implementation="flash_attention_2",
             )
-        elif model_type == MODEL_TYPE_CRITIC:
+        elif self.model_type == MODEL_TYPE_CRITIC:
             self.model: PreTrainedModel = InternLM2ForCriticModel.from_pretrained(
                 pretrained_model_name_or_path=model_path,
                 device_map="auto",
@@ -105,6 +101,7 @@ class HfModelRunner:
             self.accelerator = Accelerator(fsdp_plugin=FullyShardedDataParallelPlugin())
         elif parallel["data"].get("mode") == ENGINE_PLUGIN_DEEPSPEED:
             from accelerate import DeepSpeedPlugin
+
             ds_config = self.model_config["deepspeed_config"]  # requisite
             self.accelerator = Accelerator(deepspeed_plugin=DeepSpeedPlugin(ds_config))
         else:
@@ -113,7 +110,7 @@ class HfModelRunner:
         train_kwargs = self.model_config.get("train_kwargs")
         if train_kwargs is None:  # requires no training
             self.device = self.accelerator.device
-            print(f"[{self.__class__.__name__}] __init__() done without train_kwargs.")
+            logger.info(f"[{self.model_type}] __init__() done without train_kwargs.")
             return
 
         optimizer_type = train_kwargs.get("optimizer", torch.optim.AdamW)
@@ -140,7 +137,7 @@ class HfModelRunner:
         self.device = self.accelerator.device
         set_seed(self.model_config.get("seed"))
 
-        print(f"[{self.__class__.__name__}] __init__() done with train_kwargs.")
+        logger.info(f"[{self.model_type}] __init__() done with train_kwargs.")
 
     # Training
     def compute_loss_and_backward(
@@ -158,13 +155,17 @@ class HfModelRunner:
         criterion: _Loss class, e.g., torch.nn.CrossEntropyLoss()
         """
         if isinstance(input_ids, torch.Tensor):
-            print(f"[{self.__class__.__name__}] self.compute_loss_and_backward() for 1 input batch")
+            logger.info(
+                f"[{self.model_type}] self.compute_loss_and_backward() for 1 input batch"
+            )
             loss = self.compute_loss(input_ids, labels, attention_mask, criterion)
             loss.backward()
             return loss, loss
         elif type(input_ids) == list:  # multiple inputs grouped to compute loss
             # https://stackoverflow.com/questions/53994625/how-can-i-process-multi-loss-in-pytorch
-            print(f"[{self.__class__.__name__}] self.compute_loss_and_backward() for  input batches")
+            logger.info(
+                f"[{self.model_type}] self.compute_loss_and_backward() for  input batches"
+            )
             assert (
                 len(input_ids)
                 == len(labels)
@@ -197,7 +198,7 @@ class HfModelRunner:
         loss_weight: Optional[float] = None,
         **_ignored,
     ) -> torch.Tensor:
-
+        logger.info(f"[{self.model_type}] compute_loss input shape[{input_ids.shape}]")
         input_ids = input_ids.to(self.device)
         labels = input_ids.clone() if labels is None else labels
         batch = {
@@ -241,8 +242,8 @@ class HfModelRunner:
             loss *= loss_weight
         return loss
 
-    def parameter_update(self,step_interval=1):
-        print(f"[{self.__class__.__name__}] self.parameter_update()")
+    def parameter_update(self, step_interval=1):
+        logger.info(f"[{self.model_type}] self.parameter_update()")
         self.step += 1
         if self.step % step_interval == 0:
             self.optimizer.step()
@@ -259,24 +260,26 @@ class HfModelRunner:
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[Union[list[float], float]] = None,
         step_interval: int = 1,
-        micro_batch_size: Optional[Union[list[int],int]] = None,
+        micro_batch_size: Optional[Union[list[int], int]] = None,
         debug=False,
         **_ignored,
     ):
         weighted_loss, origin_loss = None, None
-        print(f"[{self.__class__.__name__}] self.train()")
+        logger.info(f"[{self.model_type}] self.train()")
         # loss = 0
         if micro_batch_size == None:
             weighted_loss, origin_loss = self.compute_loss_and_backward(
                 input_ids, labels, attention_mask, criterion, loss_weights
             )
         elif isinstance(input_ids, torch.Tensor):
-            micro_batches = partition_by_micro_batch_size(input_ids,micro_batch_size,attention_mask,labels)
+            micro_batches = partition_by_micro_batch_size(
+                input_ids, micro_batch_size, attention_mask, labels
+            )
             losses = []
-            for micro_batche in micro_batches:
-                input_ids_mb = micro_batche["input_ids"]
-                attention_mask_mb = micro_batche["attention_mask"]
-                labels_mb = micro_batche["labels"]
+            for micro_batch in micro_batches:
+                input_ids_mb = micro_batch["input_ids"]
+                attention_mask_mb = micro_batch["attention_mask"]
+                labels_mb = micro_batch["labels"]
                 weighted_loss_mb, _ = self.compute_loss_and_backward(
                     input_ids_mb, labels_mb, attention_mask_mb, criterion, loss_weights
                 )
@@ -284,22 +287,28 @@ class HfModelRunner:
                 if debug:
                     set_seed(1234)
             weighted_loss = sum(losses) / len(losses)
-        elif isinstance(input_ids, list):   
-            micro_batches = partition_list_by_micro_batch_size(input_ids, micro_batch_size, labels, attention_mask, loss_weights)
+        elif isinstance(input_ids, list):
+            micro_batches = partition_list_by_micro_batch_size(
+                input_ids, micro_batch_size, labels, attention_mask, loss_weights
+            )
             loss_list_mb = []
             origin_loss_list_mb = []
-            for micro_batche in micro_batches:
-                input_ids_mb=[]
-                attention_mask_mb=[]
-                labels_mb=[]
-                loss_weights_mb=[]
-                for i in range(len(micro_batche)):
-                    input_ids_mb.append(micro_batche[i]["input_ids"])
-                    attention_mask_mb.append(micro_batche[i]["attention_mask"])
-                    labels_mb.append(micro_batche[i]["labels"])
-                    loss_weights_mb.append(micro_batche[i]["loss_weights"])
+            for micro_batch in micro_batches:
+                input_ids_mb = []
+                attention_mask_mb = []
+                labels_mb = []
+                loss_weights_mb = []
+                for i in range(len(micro_batch)):
+                    input_ids_mb.append(micro_batch[i]["input_ids"])
+                    attention_mask_mb.append(micro_batch[i]["attention_mask"])
+                    labels_mb.append(micro_batch[i]["labels"])
+                    loss_weights_mb.append(micro_batch[i]["loss_weights"])
                 weighted_loss_mb, origin_loss_mb = self.compute_loss_and_backward(
-                    input_ids_mb, labels_mb, attention_mask_mb, criterion, loss_weights_mb
+                    input_ids_mb,
+                    labels_mb,
+                    attention_mask_mb,
+                    criterion,
+                    loss_weights_mb,
                 )
                 loss_list_mb.append(weighted_loss_mb)
                 origin_loss_list_mb.append(origin_loss_mb)
@@ -309,7 +318,7 @@ class HfModelRunner:
             weighted_loss = sum(loss_list_mb) / len(loss_list_mb)
 
         self.parameter_update(step_interval)
-        if origin_loss != None:
+        if origin_loss is not None:
             return origin_loss
         return weighted_loss
 
@@ -317,8 +326,7 @@ class HfModelRunner:
     @torch.no_grad()
     def _infer(
         self,
-        inputs: Union[torch.Tensor, list[dict], list[list[dict]]],
-        tokenizer=None,  # reward model may use tokenizer in inference
+        input_ids: torch.Tensor,
         attention_mask=None,
         output_logprobs=False,
         output_logits=True,
@@ -327,93 +335,17 @@ class HfModelRunner:
         infer_kwargs: Optional[dict] = {},
         **_ignored,
     ) -> PolicyOutput:
-        model_type = self.model_config.get("model_type", "").lower()
-
-        # OPT. A) Reward Model
-        if model_type == MODEL_TYPE_REWARD:
-            self.model: InternLM2ForRewardModel = self.model
-            if isinstance(inputs, torch.Tensor):
-                input_ids = inputs
-                print(f"[{self.__class__.__name__}] self.reward_model.forward(ids)")
-                fwd_output: SequenceClassifierOutputWithPast = self.model(
-                    input_ids=input_ids,
-                    output_attentions=output_attentions,
-                    output_hidden_states=output_hidden_states,
-                    attention_mask=attention_mask,
-                    **infer_kwargs,
-                )
-                return PolicyOutput(**fwd_output)
-            elif isinstance(inputs, str):
-                print(f"[{self.__class__.__name__}] self.reward_model.forward(str)")
-                tokenizer = self.tokenizer if tokenizer is None else tokenizer
-                input_ids = tokenizer.encode(inputs, return_tensors="pt")
-                input_ids = torch.cat(
-                    [
-                        input_ids,
-                        torch.tensor(
-                            [[self.model.reward_token_id]], dtype=torch.long
-                        ).expand(input_ids.shape[0], 1),
-                    ],
-                    dim=1,
-                ).to(self.device)
-
-                fwd_output: SequenceClassifierOutputWithPast = self.model(
-                    input_ids=input_ids, attention_mask=attention_mask, **infer_kwargs
-                )
-                score = fwd_output.logits.cpu().item()
-                return PolicyOutput(logits=torch.Tensor([score]))
-            elif isinstance(inputs, list):
-                if isinstance(inputs[0], dict):
-                    print(f"[{self.__class__.__name__}] self.reward_model.score(conv)")
-                    score: float = self.model.get_score(
-                        conversation=inputs, tokenizer=self.tokenizer, **infer_kwargs
-                    )
-                    return PolicyOutput(logits=torch.Tensor([score]))
-                elif isinstance(inputs[0], list):
-                    assert isinstance(inputs[0][0], dict)
-                    print(f"[{self.__class__.__name__}] self.reward_model.scores(conv)")
-                    scores: list = self.model.get_scores(
-                        conversations=inputs, tokenizer=self.tokenizer, **infer_kwargs
-                    )
-                    return PolicyOutput(logits=torch.Tensor(scores))
-                else:
-                    raise NotImplementedError
-            else:
-                raise NotImplementedError
-
-        # OPT. B) Critic Model
-        elif model_type == MODEL_TYPE_CRITIC:
-            print(f"[{self.__class__.__name__}] self.critic_model.forward(str)")
-            input_ids: torch.Tensor = self.tokenize_str_input(inputs=inputs)
-            input_ids.to(self.device)
-            model_output: SequenceClassifierOutputWithPast = self.model(
-                input_ids,
-                output_attentions=output_attentions,
-                output_hidden_states=output_hidden_states,
-                attention_mask=attention_mask,
-                return_dict=True,
-                **infer_kwargs,
-            )
-            output = PolicyOutput()
-            if output_logits:
-                output["logits"] = model_output["logits"]
-            if output_attentions:
-                output["attentions"] = model_output["attentions"]
-            if output_hidden_states:
-                output["hidden_states"] = model_output["hidden_states"]
-            return output
-
-        # OPT. C) model_type == "actor", "reference", ...
-        print(f"[{self.__class__.__name__}] self.infer() kwargs: {infer_kwargs}")
-        assert isinstance(inputs, torch.Tensor)
-        input_ids: torch.Tensor = inputs.to(self.device)
-        model_output: CausalLMOutputWithPast = self.model(
-            input_ids,
+        assert isinstance(input_ids, torch.Tensor)
+        logger.info(f"[{self.model_type}] _infer() input_ids.shape: {input_ids.shape}")
+        model_output = self.model(
+            input_ids.to(self.device),
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             attention_mask=attention_mask,
+            return_dict=True,
             **infer_kwargs,
         )
+
         output = PolicyOutput()
         if output_logits:
             output["logits"] = model_output["logits"]
@@ -425,7 +357,9 @@ class HfModelRunner:
             logpy = logprobs_from_logits(
                 logits=output["logits"][:, :-1, :], labels=input_ids[:, 1:], gather=True
             )
-            logpy_shift_right_byone = torch.zeros_like(input_ids, dtype=output["logits"].dtype)
+            logpy_shift_right_byone = torch.zeros_like(
+                input_ids, dtype=output["logits"].dtype
+            )
             logpy_shift_right_byone[:, 1:] = logpy
             output["logprobs"] = logpy_shift_right_byone
         return output
@@ -434,31 +368,64 @@ class HfModelRunner:
     def infer(
         self,
         inputs: Union[torch.Tensor, list[dict], list[list[dict]]],
-        micro_batch_size: Optional[int] = -1,
-        tokenizer=None,  # reward model may use tokenizer in inference
+        micro_batch_size: Optional[int] = -1,  # -1: use the entire input as one batch.
+        tokenizer=None,  # Only used for reward models
         attention_mask=None,
         output_logprobs=False,
         output_logits=True,
         output_attentions=False,
         output_hidden_states=False,
         infer_kwargs: Optional[dict] = {},
-        debug = False,
+        debug=False,
         **_ignored,
     ) -> PolicyOutput:
-        if (not isinstance(inputs, torch.Tensor)) or micro_batch_size < 0:
-            return self._infer(inputs,tokenizer,attention_mask,output_logprobs,output_logits,
-                               output_attentions,output_hidden_states,infer_kwargs)
-        micro_batches = partition_by_micro_batch_size(inputs,micro_batch_size,attention_mask)
+        logger.info(f"[{self.model_type}] self.infer() kwargs: {infer_kwargs}")
+        if not isinstance(inputs, torch.Tensor):
+            input_ids, attention_mask = marl_util.encode(inputs, self.tokenizer)
+            if self.model_type == MODEL_TYPE_REWARD:
+                input_ids, attention_mask = marl_util.expand_reward_token_id(
+                    self.model.reward_token_id, input_ids, attention_mask
+                )
+        else:
+            input_ids = inputs
+
+        input_ids = input_ids.to(self.device)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.device)
+
+        if micro_batch_size < 0:
+            # If no micro batch size is specified, run inference on the entire input as one batch
+            return self._infer(
+                input_ids,
+                attention_mask,
+                output_logprobs,
+                output_logits,
+                output_attentions,
+                output_hidden_states,
+                infer_kwargs,
+            )
+        # Otherwise, partition the input into micro batches and run inference on each micro batch separately
+        micro_batches = partition_by_micro_batch_size(
+            input_ids, micro_batch_size, attention_mask
+        )
         policy_outputs = []
-        for micro_batche in micro_batches:
-            input_ids_mb = micro_batche["input_ids"]
-            attention_mask_mb = micro_batche["attention_mask"]
-            policy_output_mb = self._infer(input_ids_mb,tokenizer,attention_mask_mb,output_logprobs,output_logits,
-                               output_attentions,output_hidden_states,infer_kwargs)
+        for micro_batch in micro_batches:
+            input_ids_mb = micro_batch["input_ids"]
+            attention_mask_mb = micro_batch["attention_mask"]
+            policy_output_mb = self._infer(
+                input_ids_mb,
+                attention_mask_mb,
+                output_logprobs,
+                output_logits,
+                output_attentions,
+                output_hidden_states,
+                infer_kwargs,
+            )
             policy_outputs.append(policy_output_mb)
             if debug:
                 self.set_seed(1234)
-        return concat_policy_outputs(policy_outputs) 
+        # Concatenate the policy outputs from each micro batch and return the result
+        return concat_policy_outputs(policy_outputs)
 
     # Generate
     @torch.no_grad()
@@ -473,7 +440,7 @@ class HfModelRunner:
         output_hidden_states=False,
         generate_kwargs: Optional[dict] = {},
     ) -> PolicyOutput:
-
+        assert isinstance(input_ids, torch.Tensor)
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
             model = self.accelerator.unwrap_model(self.model)
         else:
@@ -495,10 +462,14 @@ class HfModelRunner:
             output_logits=output_logits,  # transformers >= 4.38.2
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
+            attention_mask=attention_mask,
             **generate_kwargs,
         )
 
         output_ids = model_output["sequences"]
+        logger.info(
+            f"generate input_ids shape:[{input_ids.shape}], output_ids shape:[{output_ids.shape}]"
+        )
         output = PolicyOutput(output_ids=output_ids)
         # masks
         output["question_mask"], output["answer_mask"] = get_question_answer_mask(
@@ -544,33 +515,56 @@ class HfModelRunner:
         output_hidden_states=False,
         chat_template=None,
         generate_kwargs: Optional[dict] = {},
-        debug = False,
+        debug=False,
         **_ignored,
     ) -> PolicyOutput:
-        print(f"[{self.__class__.__name__}] self.generate() kwargs: {generate_kwargs}")
-        input_ids: torch.Tensor = self.tokenize_str_input(
-            inputs=inputs, chat_template=chat_template
-        )
-        assert isinstance(input_ids, torch.Tensor)
+        logger.info(f"[{self.model_type}] self.generate() kwargs: {generate_kwargs}")
+        if not isinstance(inputs, torch.Tensor):
+            input_ids, attention_mask = marl_util.encode(
+                inputs, self.tokenizer, add_generation_prompt=True
+            )
+        else:
+            input_ids = inputs
+        input_ids = input_ids.to(self.device)
+        if attention_mask is not None:
+            assert isinstance(attention_mask, torch.Tensor)
+            attention_mask = attention_mask.to(self.device)
+
         if micro_batch_size < 0:
-            return self._generate(input_ids,attention_mask,step,output_str,output_logits,
-                                  output_attentions,output_hidden_states,generate_kwargs)
-        micro_batches = partition_by_micro_batch_size(input_ids,micro_batch_size,attention_mask)
+            return self._generate(
+                input_ids,
+                attention_mask,
+                step,
+                output_str,
+                output_logits,
+                output_attentions,
+                output_hidden_states,
+                generate_kwargs,
+            )
+
+        micro_batches = partition_by_micro_batch_size(
+            input_ids, micro_batch_size, attention_mask
+        )
         policy_outputs = []
-        for micro_batche in micro_batches:
-            input_ids_mb = micro_batche["input_ids"]
-            attention_mask_mb = micro_batche["attention_mask"]
-            policy_output_mb = self._generate(input_ids_mb,attention_mask_mb,step,output_str,output_logits,
-                                  output_attentions,output_hidden_states,generate_kwargs)
+        for micro_batch in micro_batches:
+            input_ids_mb = micro_batch["input_ids"]
+            attention_mask_mb = micro_batch["attention_mask"]
+            policy_output_mb = self._generate(
+                input_ids_mb,
+                attention_mask_mb,
+                step,
+                output_str,
+                output_logits,
+                output_attentions,
+                output_hidden_states,
+                generate_kwargs,
+            )
             policy_outputs.append(policy_output_mb)
             if debug:
                 self.set_seed(1234)
 
-        padding_token_map={
-            "output_ids":self.tokenizer.pad_token_id,
-        }
-        return concat_policy_outputs(policy_outputs, padding_token_map=padding_token_map)
-
+        padding_token_map = {"output_ids": self.tokenizer.pad_token_id}
+        return concat_policy_outputs(policy_outputs, padding_token_map)
 
     def get_model(self):
         _model = self.accelerator.unwrap_model(self.model)
@@ -578,46 +572,6 @@ class HfModelRunner:
 
     def set_seed(self, seed=None):
         set_seed(seed)
-
-    def tokenize_str_input(
-        self,
-        inputs: Union[list[str], str],
-        chat_template: str = None,
-    ) -> torch.Tensor:
-        if isinstance(inputs, torch.Tensor):
-            return inputs
-        elif isinstance(inputs, str):
-            if chat_template != None:
-                inputs = self.tokenizer.apply_chat_template(
-                    [{"role": "user", "content": inputs}],
-                    tokenize=False,
-                    chat_template=chat_template,
-                    add_generation_prompt=True,
-                )
-            input_strs = inputs
-        elif isinstance(inputs, list):
-            topping = inputs[0]
-            if isinstance(topping, torch.Tensor):
-                print(f"[{self.__class__.__name__}] Cat list[torch.Tensor]: {inputs}")
-                return torch.cat(inputs, dim=0)
-            # if not isinstance(topping, str):
-            #     raise TypeError(f"Unsupported type: type({topping}) inputs({inputs})")
-            # if chat_template != None:
-            #     inputs = [
-            #         self.tokenizer.apply_chat_template(
-            #             [{"role": "user", "content": input}],
-            #             tokenize=False,
-            #             chat_template=chat_template,
-            #             add_generation_prompt=True,
-            #         )
-            #         for input in inputs
-            #     ]
-            if isinstance(topping, list):
-                inputs = [self.tokenizer.apply_chat_template(mes, tokenize=False, add_generation_prompt=True, return_tensors="pt") for mes in inputs]
-            input_strs = inputs
-        print(f"[{self.__class__.__name__}] encode string input into input_ids ...")
-        output = self.tokenizer(input_strs, return_tensors="pt", padding=True)
-        return output.input_ids
 
 
 import ray
@@ -733,6 +687,6 @@ class HfModelRunnerRayActorGroup:
             try:
                 ray.kill(actor=actor, no_restart=True)
             except BaseException as exp:
-                print(f"failed to kill ray actor {actor}. {exp}")
+                logger.error(f"failed to kill ray actor {actor}. {exp}")
         remove_placement_group(self.placement_group)
         self.released = True

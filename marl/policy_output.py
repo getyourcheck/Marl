@@ -1,5 +1,5 @@
 # Adopted from: https://github.com/huggingface/transformers/blob/HEAD/src/transformers/generation/utils.py
-from typing import Optional, Dict, Tuple
+from typing import Optional
 import torch
 from dataclasses import dataclass
 from transformers.utils.generic import ModelOutput
@@ -42,7 +42,7 @@ class PolicyOutput(ModelOutput):
                 if v != vother:
                     return False
         return True
-    
+
     def to(self, device):
         for _, v in self.items():
             if isinstance(v, torch.Tensor):
@@ -55,16 +55,20 @@ class PolicyOutput(ModelOutput):
                 keys.append(k)
         return keys
 
-def concat_policy_outputs(inputs: list[PolicyOutput], padding_token_map:Dict = None) -> PolicyOutput:
+
+def concat_policy_outputs(
+    inputs: list[PolicyOutput], padding_token_map: dict = None
+) -> PolicyOutput:
     if inputs == None or len(inputs) == 0:
         return PolicyOutput(None)
     elif len(inputs) == 1:
         return inputs[0]
-    if padding_token_map != None:
+    if padding_token_map is not None:
         padding_policy_outputs(inputs, padding_token_map)
+
     concated = PolicyOutput()
     for key, value in inputs[0].items():
-        if value == None:
+        if value is None:
             continue
         elif isinstance(value, torch.Tensor):
             concated[key] = torch.cat([po[key] for po in inputs], dim=0)
@@ -72,7 +76,7 @@ def concat_policy_outputs(inputs: list[PolicyOutput], padding_token_map:Dict = N
             concated[key] = []
             for po in inputs:
                 concated[key].extend(po[key])
-        elif isinstance(value, Tuple) and isinstance(value[0], torch.Tensor):
+        elif isinstance(value, tuple) and isinstance(value[0], torch.Tensor):
             value = [i for i in range(len(value))]
             for i in range(len(value)):
                 value[i] = torch.cat([po[key][i] for po in inputs], dim=0)
@@ -81,6 +85,7 @@ def concat_policy_outputs(inputs: list[PolicyOutput], padding_token_map:Dict = N
             raise TypeError(f"value: {value} with unsupported type: {type(value)}.")
     return concated
 
+
 def padding_policy_outputs(inputs: list[PolicyOutput], padding_token_map={}):
     keys = inputs[0].get_tensor_keys()
     for key in keys:
@@ -88,10 +93,13 @@ def padding_policy_outputs(inputs: list[PolicyOutput], padding_token_map={}):
         if key not in padding_token_map:
             padding_token_map[key] = 0
         for input in inputs:
-            old_value =  input[key]
+            old_value = input[key]
             pad = [max_shape[i] - old_value.shape[i] for i in range(len(max_shape))]
-            new_value = torch.nn.functional.pad(old_value, pad , mode='constant', value=padding_token_map[key])
+            new_value = torch.nn.functional.pad(
+                old_value, pad, mode="constant", value=padding_token_map[key]
+            )
             input[key] = new_value
+
 
 def find_max_shape(inputs: list[PolicyOutput], key):
     max_shape = torch.Tensor([]).shape

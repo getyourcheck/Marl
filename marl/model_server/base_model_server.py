@@ -112,13 +112,9 @@ class BaseModelServer:
 
     # Inference
     def infer_async(self, inputs, *args, **infer_kwargs):
-        if self.trainer_type == ENGINE_DEEPSPEED:
-            return self.trainer.fit()
         return self.trainer.infer_async(inputs, *args, **infer_kwargs)
 
     def infer_get(self, object_refs, timeout: Optional[float] = None):
-        if self.trainer_type == ENGINE_DEEPSPEED:
-            return object_refs
         return self.trainer.infer_get(object_refs, timeout=timeout)
 
     def infer(self, inputs, *args, **infer_kwargs):
@@ -167,43 +163,3 @@ class BaseModelServer:
             )
         else:
             print("[WARNING] No chat template provided. Chat API will not work.")
-
-    def tokenize_str_input(
-        self,
-        inputs: Union[list[str], str],
-        chat_template: str = None,
-    ) -> torch.Tensor:
-        if isinstance(inputs, torch.Tensor):
-            return inputs
-        elif isinstance(inputs, str):
-            if chat_template != None:
-                inputs = self.tokenizer.apply_chat_template(
-                    [{"role": "user", "content": inputs}],
-                    tokenize=False,
-                    chat_template=chat_template,
-                    add_generation_prompt=True,
-                )
-            input_strs = inputs
-        elif isinstance(inputs, list):
-            topping = inputs[0]
-            if isinstance(topping, torch.Tensor):
-                print(f"[{self.__class__.__name__}] Cat list[torch.Tensor]: {inputs}")
-                return torch.cat(inputs, dim=0)
-            if not isinstance(topping, str):
-                raise TypeError(f"Unsupported type: type({topping}) inputs({inputs})")
-            if chat_template != None:
-                inputs = [
-                    self.tokenizer.apply_chat_template(
-                        [{"role": "user", "content": input}],
-                        tokenize=False,
-                        chat_template=chat_template,
-                        add_generation_prompt=True,
-                    )
-                    for input in inputs
-                ]
-            input_strs = inputs
-        else:
-            raise NotImplementedError(f"Unsupported type {type(inputs)}:", inputs)
-        print(f"[{self.__class__.__name__}] encode string input into input_ids ...")
-        output = self.tokenizer(input_strs, return_tensors="pt", padding=True)
-        return output.input_ids

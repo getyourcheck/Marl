@@ -44,7 +44,7 @@ class Coordinator:
 
     def clean_up(self):
         for _, model_server in self.model_dict.items():
-            if model_server.trainer != None:
+            if model_server.trainer is not None:
                 model_server.trainer.release_resources()
-            if model_server.generator != None:
+            if model_server.generator is not None:
                 model_server.generator.release_resources()

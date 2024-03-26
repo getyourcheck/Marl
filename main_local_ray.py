@@ -25,8 +25,8 @@ if __name__ == "__main__":
         # "sft_data_filename": "data/config/1.8B_sft.json",
         # "ppo_data_filename": "data/config/task_ppo.json",
         # "sft_data_filename": "data/config/task_sft.json",
-        "num_samples_each_epoch": 512,
-        "sft_data_samples": 2,
+        "num_samples_each_epoch": 16,
+        # "sft_data_samples": 2,
         "tokenizer": tokenizer,
         "max_seq_len": 4096,
         "random_seed": 1024,
@@ -51,13 +51,13 @@ if __name__ == "__main__":
     rl_repeater = BaseRepeater(sft_model=sft_model, reward_scale=False, fine_grained_rm=False, value_ema=False)
     # init trainer
     train_config = {
-        "ppo_minibatch": 512,
+        "ppo_minibatch": 16,
         "train_minibatch": 1,
-        "value_minibatch": 512
+        "value_minibatch": 16
     }
     ppo = PPOTrainer(policy_model=actor_model, value_model=None, train_cfg=train_config)
     
-    pretrain_step = 40
+    pretrain_step = 0#40
     import time
     np.set_printoptions(threshold=np.inf)
     step = 1
@@ -70,7 +70,7 @@ if __name__ == "__main__":
         if pretrain_step <= 0:
             ppo_loss, pt_loss = ppo.policy_learn(trajectories, actor_model)
             logger_train.info(f"[Policy Train] Step: {step}, ppo loss: {ppo_loss}, pretrain loss: {pt_loss}")
-            logger_train.info(f"[Policy Train] Step: {step}, kl: {trajectories.kl_distance.mean()}")
+            logger_train.info(f"[Policy Train] Step: {step}, kl: {np.mean(trajectories.kl_distance)}")
         
         logger_train.info(f"rewards: {trajectories.rewards.mean()}")
 

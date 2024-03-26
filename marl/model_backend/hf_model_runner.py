@@ -270,7 +270,7 @@ class HfModelRunner:
         # loss = 0
         if micro_batch_size == None:
             weighted_loss, origin_loss = self.compute_loss_and_backward(
-                input_ids, labels, attention_mask, criterion, loss_weights ,acc_step=len(micro_batches)
+                input_ids, labels, attention_mask, criterion, loss_weights
             )
         elif isinstance(input_ids, torch.Tensor):
             micro_batches = partition_by_micro_batch_size(
@@ -363,6 +363,7 @@ class HfModelRunner:
             )
             logpy_shift_right_byone[:, 1:] = logpy
             output["logprobs"] = logpy_shift_right_byone
+        output.to("cpu")
         return output
 
     @torch.no_grad()

@@ -34,9 +34,9 @@ if __name__ == "__main__":
         # "ppo_data_filename": "data/config/1.8B_ppo.json",
         # "sft_data_filename": "data/config/1.8B_sft.json",
         "ppo_data_filename": "data/config/task_ppo.json",
-        "sft_data_filename": "data/config/task_sft.json",
+        # "sft_data_filename": "data/config/task_sft.json",
         "num_samples_each_epoch": 16,
-        "sft_data_samples": 2,
+        # "sft_data_samples": 2,
         "tokenizer": tokenizer,
         "max_seq_len": 4096,
         "random_seed": 1024,
@@ -133,7 +133,7 @@ if __name__ == "__main__":
     # init trainer
     train_config = {
         "ppo_minibatch": 8,
-        "sft_minibatch": 1,
+        # "sft_minibatch": 1,
         "value_minibatch": 8
     }
     ppo = PPOTrainer(policy_model=actor_model, value_model=None, train_cfg=train_config)
@@ -151,9 +151,9 @@ if __name__ == "__main__":
         if pretrain_step <= 0:
             ppo_loss, pt_loss = ppo.policy_learn(trajectories, actor_model)
             logger_train.info(f"[Policy Train] Step: {step}, ppo loss: {ppo_loss}, pretrain loss: {pt_loss}")
-            logger_train.info(f"[Policy Train] Step: {step}, kl: {trajectories.kl_distance}")
+            logger_train.info(f"[Policy Train] Step: {step}, kl: {np.mean(trajectories.kl_distance)}")
         
-        logger_train.info(f"rewards: {trajectories.rewards.numpy()}")
+        logger_train.info(f"rewards: {trajectories.rewards.mean()}")
 
         value_loss = ppo.value_learn(trajectories, critic_model)
         logger_train.info(f"[Value Train] step: {step}, value loss: {value_loss}")

@@ -29,15 +29,15 @@ class BaseRepeater(object):
                         value_ema: bool = False,
                         **kwargs):
         self.sft_model = sft_model
-        self.max_infer_bs = 16
+        self.max_infer_bs = 8
         self.reward_scale = reward_scale
         self.fine_grained_rm = fine_grained_rm
         self.value_ema = value_ema
         self.kl_coeff = 0.02
         self.gamma = 1.0
         self.gae_lambda = 0.95
-        self.device = None
         self.answer_end_id = 92542
+        self.norm_adv = True
 
     def process(self, trajectories: PolicyOutput, policy_model, value_model, sft_model=None):
         if sft_model is not None:
@@ -52,7 +52,13 @@ class BaseRepeater(object):
         trajectories["values_with_last_value"] = values_with_last_value
 
         advantages, returns = self._get_advantages_and_returns(trajectories)
-        trajectories["advantages"] = advantages
+        answer_mask = trajectories["answer_mask"].cpu()
+        if self.norm_adv:
+            mean =  torch.sum(advantages) / torch.sum(answer_mask + 1e-8)
+            var = torch.sum(((advantages - mean) ** 2) * answer_mask) / (torch.sum(answer_mask) + 1e-8)
+            trajectories["advantages"] = (advantages - mean) * torch.rsqrt(var + 1e-8)
+        else:
+            trajectories["advantages"] = advantages
         trajectories["returns"] = returns
 
         return trajectories

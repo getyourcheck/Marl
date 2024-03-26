@@ -165,7 +165,7 @@ class TxtMessageDataset(IterableDataset):
         if token_ids.shape[-1] <= 4:
             return None
 
-        assert token_ids.shape[-1] <= self.max_seq_len, "{}-{}".format(token_ids.shape[-1], self.max_seq_len)
+        # assert token_ids.shape[-1] <= self.max_seq_len, "{}-{}".format(token_ids.shape[-1], self.max_seq_len)
         if token_ids.shape[-1] > self.max_seq_len:
             # TODO truncation
             # raise RuntimeError(f"token_ids is too long: {token_ids.shape[-1]}")

@@ -7,6 +7,7 @@ import sys
 sys.path.extend(["./", "marl/dataset"])
 from marl.loss.actor_loss import ActorLoss
 from marl.loss.critic_loss import CriticLoss
+from marl.loss.pretrain_loss import PretrainLoss
 
 
 class PPOTrainer(object):
@@ -15,17 +16,18 @@ class PPOTrainer(object):
         self.train_cfg = train_cfg
         # policy
         self.policy_model = policy_model
-        self.policy_learn_time = 1 # train_cfg.policy.learn_time
+        self.policy_learn_time = self.train_cfg.get("policy_learn_time", 1)
 
-        self.sft_minibatch = self.train_cfg['sft_minibatch'] if self.train_cfg.get("sft_minibatch", None) is not None else 0
+        self.sft_minibatch = self.train_cfg['sft_minibatch'] if self.train_cfg.get("sft_minibatch", None) is not None else None
+        self.train_minibatch = self.train_cfg["train_minibatch"] if self.train_cfg.get("train_minibatch", None) is not None else None
         self.policy_minibatch = self.train_cfg["ppo_minibatch"]
 
         # value
         self.value_model = value_model
-        self.value_learn_time = 1 # train_cfg.value.learn_time
+        self.value_learn_time = self.train_cfg.get("value_learn_time", 1)
         self.value_minibatch = self.train_cfg["value_minibatch"]
 
-        self.sft_criterion = None
+        self.sft_criterion = PretrainLoss(loss_factor=1.0)
         self.policy_criterion = ActorLoss(cliprange=0.2, loss_type="per_seq")
         self.value_criterion = CriticLoss(cliprange_value=0.5, loss_type="per_seq")
 
@@ -34,6 +36,8 @@ class PPOTrainer(object):
         policy_loss = []
         # TODO, 
         pt_loss = []
+        # if self.sft_minibatch is not None:
+        #     assert trajectories.sft_data is not None, "Make sure sft data in your data loader!!!"
 
         for _ in range(self.policy_learn_time):
             for i in range(policy_updates):
@@ -56,12 +60,17 @@ class PPOTrainer(object):
                             mask=policy_batch_inputs["answer_mask"],
                             loss_factor=torch.tensor(loss_factor),
                         )
+                # sft data
+                if self.sft_minibatch is not None:
+                    sft_inputs = {""}
+                    pass
                 # for k, v in labels.items():
                 #     print("[Policy Train]]", k, v.shape)
                 p_loss = policy_model.train(input_ids=policy_batch_inputs["input_ids"],
                                             labels=labels,     
                                             attention_mask=policy_batch_inputs["attention_mask"],
-                                            criterion=self.policy_criterion)
+                                            criterion=self.policy_criterion,
+                                            micro_batch_size=self.train_minibatch)
                 print(f"[Policy Train] {self.policy_minibatch} batch, time {round(time.time() - s_t, 2)}s Policy loss: {p_loss.item()}")
                 policy_loss.append(p_loss.item())
 
@@ -96,7 +105,8 @@ class PPOTrainer(object):
                 v_loss = value_model.train(input_ids=value_batch_inputs["input_ids"],
                                             labels=labels,     
                                             attention_mask=value_batch_inputs["attention_mask"],
-                                            criterion=self.value_criterion)
+                                            criterion=self.value_criterion,
+                                            micro_batch_size=self.train_minibatch)
                 print(f"[Value Train] {self.value_minibatch} batch, time {round(time.time() - s_t, 2)}s value loss: {v_loss.item()}")
                 value_loss.append(v_loss.item())
 

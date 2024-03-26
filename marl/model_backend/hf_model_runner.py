@@ -149,6 +149,7 @@ class HfModelRunner:
         attention_mask: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[list[float]] = None,
+        acc_step = 1,
         **_ignored,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """
@@ -158,7 +159,7 @@ class HfModelRunner:
             logger.info(
                 f"[{self.model_type}] self.compute_loss_and_backward() for 1 input batch"
             )
-            loss = self.compute_loss(input_ids, labels, attention_mask, criterion)
+            loss = self.compute_loss(input_ids, labels, attention_mask, criterion) / acc_step
             loss.backward()
             return loss, loss
         elif type(input_ids) == list:  # multiple inputs grouped to compute loss
@@ -183,7 +184,7 @@ class HfModelRunner:
                 )
                 origin_loss[i] = loss
                 loss_cache[i] = loss * loss_weights[i]
-            loss_sum = sum(loss_cache)
+            loss_sum = sum(loss_cache) / acc_step
             loss_sum.backward()
             return loss_sum, origin_loss
         else:
@@ -269,7 +270,7 @@ class HfModelRunner:
         # loss = 0
         if micro_batch_size == None:
             weighted_loss, origin_loss = self.compute_loss_and_backward(
-                input_ids, labels, attention_mask, criterion, loss_weights
+                input_ids, labels, attention_mask, criterion, loss_weights ,acc_step=len(micro_batches)
             )
         elif isinstance(input_ids, torch.Tensor):
             micro_batches = partition_by_micro_batch_size(
@@ -281,7 +282,7 @@ class HfModelRunner:
                 attention_mask_mb = micro_batch["attention_mask"]
                 labels_mb = micro_batch["labels"]
                 weighted_loss_mb, _ = self.compute_loss_and_backward(
-                    input_ids_mb, labels_mb, attention_mask_mb, criterion, loss_weights
+                    input_ids_mb, labels_mb, attention_mask_mb, criterion, loss_weights ,acc_step=len(micro_batches)
                 )
                 losses.append(weighted_loss_mb)
                 if debug:
@@ -328,8 +329,8 @@ class HfModelRunner:
         self,
         input_ids: torch.Tensor,
         attention_mask=None,
-        output_logprobs=False,
-        output_logits=True,
+        output_logprobs=True,
+        output_logits=False,
         output_attentions=False,
         output_hidden_states=False,
         infer_kwargs: Optional[dict] = {},
@@ -355,10 +356,10 @@ class HfModelRunner:
             output["hidden_states"] = model_output["hidden_states"]
         if output_logprobs:
             logpy = logprobs_from_logits(
-                logits=output["logits"][:, :-1, :], labels=input_ids[:, 1:], gather=True
+                logits=model_output["logits"][:, :-1, :], labels=input_ids[:, 1:], gather=True
             )
             logpy_shift_right_byone = torch.zeros_like(
-                input_ids, dtype=output["logits"].dtype
+                input_ids, dtype=model_output["logits"].dtype
             )
             logpy_shift_right_byone[:, 1:] = logpy
             output["logprobs"] = logpy_shift_right_byone
@@ -573,6 +574,16 @@ class HfModelRunner:
     def set_seed(self, seed=None):
         set_seed(seed)
 
+    def save_model(self, path):
+        # TODO: ONLY RANK 0
+        model = self.model
+        if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
+            model =  self.accelerator.unwrap_model(self.model)
+        if not os.path.exists(path):
+            os.makedirs(path)
+        model.save_pretrained(path, from_pt=True)
+        logger.info(f"save model to {path}")
+
 
 import ray
 from ray.util.placement_group import (
@@ -690,3 +701,6 @@ class HfModelRunnerRayActorGroup:
                 logger.error(f"failed to kill ray actor {actor}. {exp}")
         remove_placement_group(self.placement_group)
         self.released = True
+
+    def save_model(self, path):
+        ray.get(self.ray_actors[0].save_model.remote(path))

@@ -22,7 +22,7 @@ class TxtEnv(object):
 
         self._cur_messagess = []
         self.max_step = max_step
-        self.max_infer_batchsize = 16
+        self.max_gen_bs = 8
         self.clip_reward_min = - 1.5
         self.clip_reward_max = 1.5
         self.generate_config = {'do_sample': True, 
@@ -50,7 +50,11 @@ class TxtEnv(object):
                 raise TypeError(f"Wrong message type {data.mes_type}")
 
         # ppo data
-        trajectories = policy_model.generate(ppo_input_messages, step=self.max_step, output_logits=True, output_str=True, generate_kwargs=self.generate_config)
+        trajectories = policy_model.generate(inputs=ppo_input_messages, 
+                                        micro_batch_size=self.max_gen_bs, 
+                                        step=self.max_step,
+                                        output_str=True, 
+                                        generate_kwargs=self.generate_config)
         print(f"[TxtEnv & {policy_model.__class__.__name__}] {round(time.time() - s_t, 2)}s generate {len(ppo_input_messages)} ppo episodes.")
         rewards = self._get_reward(ppo_input_messages, trajectories)
         clipped_rewards = torch.clamp(rewards, min=self.clip_reward_min, max=self.clip_reward_max)
@@ -70,7 +74,7 @@ class TxtEnv(object):
         if self.reward_function is not None:
             for i in range(len(range(len(policyout.output_ans_str)))):
                 input_messages[i].append({"role": "assistant", "content": policyout.output_ans_str[i]})
-            rm_out = self.reward_function.infer(input_messages)
+            rm_out = self.reward_function.infer(input_messages, output_logprobs=False,micro_batch_size=self.max_gen_bs)
             rewards = rm_out.logits.cpu().squeeze(-1)
             return rewards
         print(f"[TxtEnv] No reward funtion, no reward provided.")

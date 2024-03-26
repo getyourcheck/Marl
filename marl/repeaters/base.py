@@ -29,6 +29,7 @@ class BaseRepeater(object):
                         value_ema: bool = False,
                         **kwargs):
         self.sft_model = sft_model
+        self.max_infer_bs = 16
         self.reward_scale = reward_scale
         self.fine_grained_rm = fine_grained_rm
         self.value_ema = value_ema
@@ -62,8 +63,8 @@ class BaseRepeater(object):
         answer_mask = trajectories.answer_mask.cpu()
         attention_mask = trajectories.attention_mask.cpu()
 
-        policy_output = policy_model.infer(trajectories.output_ids, attention_mask=attention_mask, output_logprobs=True)
-        sft_output = self.sft_model.infer(trajectories.output_ids, attention_mask=attention_mask, output_logprobs=True)
+        policy_output = policy_model.infer(trajectories.output_ids, micro_batch_size=self.max_infer_bs, attention_mask=attention_mask, output_logits=False, output_logprobs=True)
+        sft_output = self.sft_model.infer(trajectories.output_ids, micro_batch_size=self.max_infer_bs, attention_mask=attention_mask, output_logits=False, output_logprobs=True)
         policy_logprobs = policy_output.logprobs.cpu() * answer_mask
         sft_logprobs = sft_output.logprobs.cpu() * answer_mask
 
@@ -90,7 +91,7 @@ class BaseRepeater(object):
         return finnal_rewards, policy_logprobs, sft_logprobs, kl_distance
 
     def _get_values(self, trajectories: PolicyOutput, value_model):
-        value_output = value_model.infer(trajectories.output_ids, attention_mask=trajectories.answer_mask)
+        value_output = value_model.infer(trajectories.output_ids, attention_mask=trajectories.answer_mask, output_logits=True, micro_batch_size=self.max_infer_bs,)
         values_with_last_value = value_output.logits.cpu() * trajectories.answer_mask.cpu()
         return values_with_last_value
 

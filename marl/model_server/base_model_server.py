@@ -163,3 +163,6 @@ class BaseModelServer:
             )
         else:
             print("[WARNING] No chat template provided. Chat API will not work.")
+
+    def save_model(self, path):
+        self.trainer.save_model(path)

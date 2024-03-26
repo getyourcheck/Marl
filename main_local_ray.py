@@ -6,9 +6,14 @@ from marl.trainer.ppo import PPOTrainer
 from marl.coordinator import Coordinator
 from marl.config import Config
 import numpy as np
-import torch
+from loguru import logger
 
 if __name__ == "__main__":
+
+    logger.add("train_train.log", filter=lambda record: record["extra"].get("name") == "train")
+    logger.add("train_rollout.log", filter=lambda record: record["extra"].get("name") == "rollout")
+    logger_train = logger.bind(name="train")
+    logger_rollout = logger.bind(name="rollout")
 
     model_path = "internlm/internlm2-chat-1_8b-sft"
     tokenizer = get_tokenizer(model_path, trust_remote_code=True)
@@ -16,11 +21,11 @@ if __name__ == "__main__":
     tokenizer.padding_side = "left"
 
     dataset_config = {
-        # "ppo_data_filename": "data/config/1.8B_ppo.json",
+        "ppo_data_filename": "data/config/1.8B_ppo.json",
         # "sft_data_filename": "data/config/1.8B_sft.json",
-        "ppo_data_filename": "data/config/task_ppo.json",
-        "sft_data_filename": "data/config/task_sft.json",
-        "num_samples_each_epoch": 16,
+        # "ppo_data_filename": "data/config/task_ppo.json",
+        # "sft_data_filename": "data/config/task_sft.json",
+        "num_samples_each_epoch": 512,
         "sft_data_samples": 2,
         "tokenizer": tokenizer,
         "max_seq_len": 4096,
@@ -46,13 +51,13 @@ if __name__ == "__main__":
     rl_repeater = BaseRepeater(sft_model=sft_model, reward_scale=False, fine_grained_rm=False, value_ema=False)
     # init trainer
     train_config = {
-        "ppo_minibatch": 8,
-        "sft_minibatch": 1,
-        "value_minibatch": 8
+        "ppo_minibatch": 512,
+        "train_minibatch": 1,
+        "value_minibatch": 512
     }
     ppo = PPOTrainer(policy_model=actor_model, value_model=None, train_cfg=train_config)
     
-    pretrain_step = 0#40
+    pretrain_step = 40
     import time
     np.set_printoptions(threshold=np.inf)
     step = 1
@@ -64,14 +69,16 @@ if __name__ == "__main__":
         # # for policy & critic learn
         if pretrain_step <= 0:
             ppo_loss, pt_loss = ppo.policy_learn(trajectories, actor_model)
-            print(f"[Policy Train] Step: {step}, ppo loss: {ppo_loss}, pretrain loss: {pt_loss}")
-            print(f"[Policy Train] Step: {step}, kl: {trajectories.kl_distance}")
+            logger_train.info(f"[Policy Train] Step: {step}, ppo loss: {ppo_loss}, pretrain loss: {pt_loss}")
+            logger_train.info(f"[Policy Train] Step: {step}, kl: {trajectories.kl_distance.mean()}")
         
-        print(f"rewards: {trajectories.rewards.to(torch.float).numpy()}")
+        logger_train.info(f"rewards: {trajectories.rewards.mean()}")
 
         value_loss = ppo.value_learn(trajectories, critic_model)
-        print(f"[Value Train] step: {step}, value loss: {value_loss}")
+        logger_train.info(f"[Value Train] step: {step}, value loss: {value_loss}")
         pretrain_step -= 1
 
-        print(f"generates: {trajectories.output_str}")
+        logger_rollout.info(f"generates: {trajectories.output_str}")
         step += 1
+        if step % 20 == 0:
+            actor_model.save_model(f"/cpfs01/shared/public/llm_model/ckpt/test_0326/{step}/")

@@ -149,23 +149,27 @@ class HfModelRunner:
         attention_mask: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[list[float]] = None,
-        acc_step = 1,
+        gradient_accumulation_steps=1,
         **_ignored,
     ) -> tuple[torch.Tensor, list[torch.Tensor]]:
         """
         criterion: _Loss class, e.g., torch.nn.CrossEntropyLoss()
         """
-        if isinstance(input_ids, torch.Tensor):
+        if isinstance(input_ids, torch.Tensor):  # returns torch.Tensor
+            # rarely, since self.train() changes all input_ids to [input_ids]
             logger.info(
                 f"[{self.model_type}] self.compute_loss_and_backward() for 1 input batch"
             )
-            loss = self.compute_loss(input_ids, labels, attention_mask, criterion) / acc_step
+            loss = self.compute_loss(input_ids, labels, attention_mask, criterion)
+            loss /= gradient_accumulation_steps
             loss.backward()
-            return loss, loss
-        elif type(input_ids) == list:  # multiple inputs grouped to compute loss
+            return loss
+
+        elif type(input_ids) == list:  # returns list[torch.Tensor]
+            # multiple inputs grouped to compute loss, see:
             # https://stackoverflow.com/questions/53994625/how-can-i-process-multi-loss-in-pytorch
             logger.info(
-                f"[{self.model_type}] self.compute_loss_and_backward() for  input batches"
+                f"[{self.model_type}] self.compute_loss_and_backward() for input batches"
             )
             assert (
                 len(input_ids)
@@ -174,21 +178,20 @@ class HfModelRunner:
                 == len(attention_mask)
                 == len(loss_weights)
             ), f"{len(input_ids)} {len(labels)} {len(criterion)} {len(attention_mask)} {len(loss_weights)} must equal"
-            loss_cache = [0 for _ in range(len(input_ids))]
-            origin_loss = [0 for _ in range(len(input_ids))]
+            loss_list = [0 for _ in range(len(input_ids))]
             loss_weights = [x / float(len(loss_weights)) for x in loss_weights]  # to 1
 
+            loss_sum = 0
             for i in range(len(input_ids)):
-                loss = self.compute_loss(
-                    input_ids[i], labels[i], attention_mask[i], criterion[i]
-                )
-                origin_loss[i] = loss
-                loss_cache[i] = loss * loss_weights[i]
-            loss_sum = sum(loss_cache) / acc_step
+                loss = self.compute_loss(input_ids[i], labels[i], attention_mask[i], criterion[i])
+                loss_sum += loss * loss_weights[i]
+                loss_list[i] = loss
+            loss_sum /= gradient_accumulation_steps
             loss_sum.backward()
-            return loss_sum, origin_loss
+            return loss_list
+
         else:
-            raise NotImplementedError
+            raise NotImplementedError(f"unknown input {input_ids}")
 
     def compute_loss(
         self,
@@ -261,38 +264,31 @@ class HfModelRunner:
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[Union[list[float], float]] = None,
         step_interval: int = 1,
-        micro_batch_size: Optional[Union[list[int], int]] = None,
-        debug=False,
+        micro_batch_size: Optional[Union[list[int], int]] = None,  # None means using the entire input as one batch
+        debug = False,
         **_ignored,
     ):
-        weighted_loss, origin_loss = None, None
         logger.info(f"[{self.model_type}] self.train()")
-        # loss = 0
-        if micro_batch_size == None:
-            weighted_loss, origin_loss = self.compute_loss_and_backward(
+        return_list = True
+
+        if isinstance(input_ids, torch.Tensor):
+            input_ids = [input_ids]
+            labels = [labels]
+            attention_mask = [attention_mask]
+            criterion = [criterion]
+            loss_weights = [1] if loss_weights is None else [loss_weights]
+            micro_batch_size = None if micro_batch_size is None else [micro_batch_size]
+            return_list = False
+
+        if micro_batch_size is None:
+            origin_loss = self.compute_loss_and_backward(
                 input_ids, labels, attention_mask, criterion, loss_weights
             )
-        elif isinstance(input_ids, torch.Tensor):
-            micro_batches = partition_by_micro_batch_size(
-                input_ids, micro_batch_size, attention_mask, labels
-            )
-            losses = []
-            for micro_batch in micro_batches:
-                input_ids_mb = micro_batch["input_ids"]
-                attention_mask_mb = micro_batch["attention_mask"]
-                labels_mb = micro_batch["labels"]
-                weighted_loss_mb, _ = self.compute_loss_and_backward(
-                    input_ids_mb, labels_mb, attention_mask_mb, criterion, loss_weights ,acc_step=len(micro_batches)
-                )
-                losses.append(weighted_loss_mb)
-                if debug:
-                    set_seed(1234)
-            weighted_loss = sum(losses) / len(losses)
-        elif isinstance(input_ids, list):
+        else:
+            assert isinstance(input_ids, list)
             micro_batches = partition_list_by_micro_batch_size(
                 input_ids, micro_batch_size, labels, attention_mask, loss_weights
             )
-            loss_list_mb = []
             origin_loss_list_mb = []
             for micro_batch in micro_batches:
                 input_ids_mb = []
@@ -304,24 +300,22 @@ class HfModelRunner:
                     attention_mask_mb.append(micro_batch[i]["attention_mask"])
                     labels_mb.append(micro_batch[i]["labels"])
                     loss_weights_mb.append(micro_batch[i]["loss_weights"])
-                weighted_loss_mb, origin_loss_mb = self.compute_loss_and_backward(
+
+                origin_loss_mb = self.compute_loss_and_backward(
                     input_ids_mb,
                     labels_mb,
                     attention_mask_mb,
                     criterion,
                     loss_weights_mb,
+                    gradient_accumulation_steps=len(micro_batches),
                 )
-                loss_list_mb.append(weighted_loss_mb)
                 origin_loss_list_mb.append(origin_loss_mb)
                 if debug:
                     set_seed(1234)
             origin_loss = merge_loss_list(origin_loss_list_mb)
-            weighted_loss = sum(loss_list_mb) / len(loss_list_mb)
 
         self.parameter_update(step_interval)
-        if origin_loss is not None:
-            return origin_loss
-        return weighted_loss
+        return origin_loss if return_list else origin_loss[0]
 
     # Inference
     @torch.no_grad()
@@ -356,7 +350,9 @@ class HfModelRunner:
             output["hidden_states"] = model_output["hidden_states"]
         if output_logprobs:
             logpy = logprobs_from_logits(
-                logits=model_output["logits"][:, :-1, :], labels=input_ids[:, 1:], gather=True
+                logits=model_output["logits"][:, :-1, :],
+                labels=input_ids[:, 1:],
+                gather=True,
             )
             logpy_shift_right_byone = torch.zeros_like(
                 input_ids, dtype=model_output["logits"].dtype
@@ -370,7 +366,7 @@ class HfModelRunner:
     def infer(
         self,
         inputs: Union[torch.Tensor, list[dict], list[list[dict]]],
-        micro_batch_size: Optional[int] = -1,  # -1: use the entire input as one batch.
+        micro_batch_size: Optional[int] = -1,  # -1: use the entire input as one batch
         tokenizer=None,  # Only used for reward models
         attention_mask=None,
         output_logprobs=False,
@@ -395,8 +391,7 @@ class HfModelRunner:
         if attention_mask is not None:
             attention_mask = attention_mask.to(self.device)
 
-        if micro_batch_size < 0:
-            # If no micro batch size is specified, run inference on the entire input as one batch
+        if micro_batch_size < 0:  # returns entire-input-as-one-batch inference results 
             return self._infer(
                 input_ids,
                 attention_mask,
@@ -406,6 +401,7 @@ class HfModelRunner:
                 output_hidden_states,
                 infer_kwargs,
             )
+
         # Otherwise, partition the input into micro batches and run inference on each micro batch separately
         micro_batches = partition_by_micro_batch_size(
             input_ids, micro_batch_size, attention_mask
@@ -508,7 +504,7 @@ class HfModelRunner:
     def generate(
         self,
         inputs: Union[torch.Tensor, str, list[str]],
-        micro_batch_size: Optional[int] = -1,
+        micro_batch_size: Optional[int] = -1,  # -1: use the entire input as one batch
         attention_mask=None,
         step=-1,
         output_str=True,
@@ -579,7 +575,7 @@ class HfModelRunner:
         # TODO: ONLY RANK 0
         model = self.model
         if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
-            model =  self.accelerator.unwrap_model(self.model)
+            model = self.accelerator.unwrap_model(self.model)
         if not os.path.exists(path):
             os.makedirs(path)
         model.save_pretrained(path, from_pt=True)

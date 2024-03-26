@@ -233,7 +233,6 @@ def test_partition_generate_and_infer():
         "top_p": 0.9,
         "min_new_tokens": 1,
         "num_beams": 1,
-        "early_stopping": True,
         "eos_token_id": 92542,
         "pad_token_id": 0,
     }

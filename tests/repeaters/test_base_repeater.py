@@ -6,7 +6,7 @@ Run `python tests/repeaters/test_base_repeater.py`.
 import sys
 sys.path.extend(["./", "marl/dataset"])
 from collections import defaultdict
-from marl.dataset.txt_loader import TxtSequenceDataset
+from marl.dataset.txt_loader import TxtMessageDataset
 from marl.tokenizer.tokenizer_utils import get_tokenizer
 from marl.envs.txt_env import TxtEnv
 from marl.repeaters.base import BaseRepeater
@@ -31,7 +31,7 @@ if __name__ == "__main__":
         "end_token": "[UNUSED_TOKEN_145]\n",
     }
     # init txt env
-    txt_loader = TxtSequenceDataset(**dataset_config)
+    txt_loader = TxtMessageDataset(**dataset_config)
     txt_env = TxtEnv(dataloader=txt_loader, reward_function=None)
 
     # init repeater

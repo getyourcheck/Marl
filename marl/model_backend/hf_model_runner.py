@@ -187,7 +187,7 @@ class HfModelRunner:
                 loss_sum += loss * loss_weights[i]
                 loss_list[i] = loss
             loss_sum /= gradient_accumulation_steps
-            self.accelerator.backward(loss)
+            self.accelerator.backward(loss_sum)
             return loss_list
 
         else:

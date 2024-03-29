@@ -54,7 +54,7 @@ def test_actor_loss():
     )
     loss = mr.train(input_ids, labels, criterion=ActorLoss(), step_interval=999).item()
     print(loss)
-    assert loss == -117.17906188964844
+    assert loss == -117.1788101196289
     pretrain_input_ids = torch.tensor([[ 611, 18963,  1893, 15065,  3126,   491, 10850,   454, 56025, 19603,
            756,   918,  6690,   435, 28260,  5992,  1556,   668,   517,   937,
           2308,   281, 18590,   518,   451, 21239,  8726,   454,  8917,   313,
@@ -71,5 +71,5 @@ def test_actor_loss():
         loss_weights =[1,1],
         step_interval=999
     )
-    assert train_loss.item() == -117.17906188964844
+    assert train_loss.item() == -117.1788101196289
     assert pretrain_loss.item() == 12.587218284606934

@@ -259,69 +259,6 @@ class HfRunner:
 def hf_runner():
     return HfRunner
 
-
-class VllmRunner:
-    from vllm import LLM
-    from vllm.sampling_params import SamplingParams
-    def __init__(
-        self,
-        model_name: str,
-        tokenizer_name: Optional[str] = None,
-        dtype: str = "half",
-    ) -> None:
-        self.model = LLM(
-            model=model_name,
-            tokenizer=tokenizer_name,
-            trust_remote_code=True,
-            dtype=dtype,
-            swap_space=0,
-        )
-
-    def generate(
-        self,
-        prompts: List[str],
-        sampling_params: SamplingParams,
-    ) -> List[Tuple[List[int], str]]:
-        req_outputs = self.model.generate(prompts,
-                                          sampling_params=sampling_params)
-        outputs = []
-        for req_output in req_outputs:
-            prompt_str = req_output.prompt
-            prompt_ids = req_output.prompt_token_ids
-            req_sample_output_ids = []
-            req_sample_output_strs = []
-            for sample in req_output.outputs:
-                output_str = sample.text
-                output_ids = sample.token_ids
-                req_sample_output_ids.append(prompt_ids + output_ids)
-                req_sample_output_strs.append(prompt_str + output_str)
-            outputs.append((req_sample_output_ids, req_sample_output_strs))
-        return outputs
-
-    def generate_greedy(
-        self,
-        prompts: List[str],
-        max_tokens: int,
-    ) -> List[Tuple[List[int], str]]:
-        greedy_params = SamplingParams(temperature=0.0, max_tokens=max_tokens)
-        outputs = self.generate(prompts, greedy_params)
-        return [(output_ids[0], output_str[0])
-                for output_ids, output_str in outputs]
-
-    def generate_beam_search(
-        self,
-        prompts: List[str],
-        beam_width: int,
-        max_tokens: int,
-    ) -> List[Tuple[List[int], str]]:
-        beam_search_params = SamplingParams(n=beam_width,
-                                            use_beam_search=True,
-                                            temperature=0.0,
-                                            max_tokens=max_tokens)
-        outputs = self.generate(prompts, beam_search_params)
-        return outputs
-
-
 @pytest.fixture
 def vllm_runner():
     return HfRunner  # FIXME

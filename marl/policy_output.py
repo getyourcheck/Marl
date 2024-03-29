@@ -125,8 +125,8 @@ def logprobs_from_logits(
     >>> logprobs = logprobs_from_logits(logits[:, :-1, :], input_ids[:, 1:])
     ```"""
 
-    logp = torch.nn.functional.log_softmax(logits.cpu(), dim=-1)
+    logp = torch.nn.functional.log_softmax(logits, dim=-1)
     if not gather or labels is None:
         return logp
-    logpy = torch.gather(logp, -1, labels.cpu().unsqueeze(2)).squeeze(-1)
+    logpy = torch.gather(logp, -1, labels.unsqueeze(2)).squeeze(-1)
     return logpy.cuda()

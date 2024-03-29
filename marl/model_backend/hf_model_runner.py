@@ -122,7 +122,7 @@ class HfModelRunner:
 
         lr_scheduler_type = train_kwargs.get("lr_scheduler", "linear")
         lr_scheduler_kwargs = train_kwargs.get(
-            "lr_scheduler_kwargs", {"num_warmup_steps": 5, "num_training_steps": 10}
+            "lr_scheduler_kwargs", {"num_warmup_steps": 0, "num_training_steps": 10000000000}
         )
         self.lr_scheduler: _LRScheduler = transformers_get_scheduler(
             lr_scheduler_type,

@@ -56,12 +56,15 @@ class FileDataset(IterableDataset):
 class MultiSourceDatset(IterableDataset):
     """Multiple source dataset."""
 
-    def __init__(self, task_group_filename, sub_dataset_type="file", random_seed=1024):
-        with open(task_group_filename) as fin:
-            tasks = json.load(fin)
-            # filter zero probability task
-            tasks = [task for task in tasks if task["prob"] > 0]
-            self._task_group = tasks
+    def __init__(self, task_groups, sub_dataset_type="file", random_seed=1024):
+        self._task_group = []
+        for _task in task_groups:
+            file_path, prob = _task.split("::")[0], float(_task.split("::")[1])
+            if prob > 0:
+                self._task_group.append({'prob': prob, 'filepath': file_path})
+            else:
+                print(f"[DataLoader] Warning skip file, prob of {file_path} is {prob} ...")
+        assert len(self._task_group) > 0, "No data to be trained"
         if sub_dataset_type == "file":
             for task in self._task_group:
                 task["dataset"] = FileDataset(task["filepath"])
@@ -90,14 +93,17 @@ class MultiSourceDatset(IterableDataset):
 
 if __name__ == "__main__":
     dataset_config = {
-        "task_group_filename": "data/config/task_ppo.json",
+        "task_groups": ["./data/ppo_data/ppo_data_0.json::0.9",
+                        "./data/ppo_data/ppo_data_1.json::0.1",
+                        "./data/ppo_data/ppo_data_1.json::0.0",
+                        ],
         "max_seq_len": 4096,
         "num_samples_each_epoch": 8,
         "random_seed": 1
     }
 
-    example_dataset = MultiSourceDatset(
-        task_group_filename=dataset_config["task_group_filename"],
+    example_dataset = iter(MultiSourceDatset(
+        task_groups=dataset_config["task_groups"],
         sub_dataset_type="file",
-    )
-    print(example_dataset)
+    ))
+    print(next(example_dataset))

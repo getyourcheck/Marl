@@ -18,7 +18,7 @@ class PPOTrainer(object):
         self.policy_model = policy_model
         self.policy_learn_time = self.train_cfg.get("policy_learn_time", 1)
 
-        self.sft_minibatch = self.train_cfg['sft_minibatch'] if self.train_cfg.get("sft_minibatch", None) is not None else None
+        self.pt_minibatch = self.train_cfg['pt_minibatch'] if self.train_cfg.get("pt_minibatch", None) is not None else None
         self.train_minibatch = self.train_cfg["train_minibatch"] if self.train_cfg.get("train_minibatch", None) is not None else None
         self.policy_minibatch = self.train_cfg["ppo_minibatch"]
 
@@ -27,7 +27,7 @@ class PPOTrainer(object):
         self.value_learn_time = self.train_cfg.get("value_learn_time", 1)
         self.value_minibatch = self.train_cfg["value_minibatch"]
 
-        self.sft_criterion = PretrainLoss(loss_factor=1.0)
+        self.pt_criterion = PretrainLoss(loss_factor=1.0)
         self.policy_criterion = ActorLoss(cliprange=0.2, loss_type="per_seq")
         self.value_criterion = CriticLoss(cliprange_value=0.5, loss_type="per_seq")
 
@@ -36,8 +36,8 @@ class PPOTrainer(object):
         policy_loss = []
         # TODO, 
         pt_loss = []
-        # if self.sft_minibatch is not None:
-        #     assert trajectories.sft_data is not None, "Make sure sft data in your data loader!!!"
+        # if self.pt_minibatch is not None:
+        #     assert trajectories.pt_data is not None, "Make sure pretrain data in your data loader!!!"
 
         for _ in range(self.policy_learn_time):
             for i in range(policy_updates):
@@ -60,9 +60,9 @@ class PPOTrainer(object):
                             mask=policy_batch_inputs["answer_mask"],
                             loss_factor=torch.tensor(loss_factor),
                         )
-                # sft data
-                if self.sft_minibatch is not None:
-                    sft_inputs = {""}
+                # pretrain data
+                if self.pt_minibatch is not None:
+                    pt_inputs = {""}
                     pass
                 # for k, v in labels.items():
                 #     print("[Policy Train]]", k, v.shape)

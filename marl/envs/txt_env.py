@@ -11,7 +11,7 @@ class TxtEnv(object):
     A generic RL environment to generate textual sequences.
     """
 
-    def __init__(self, dataloader: IterableDataset, max_step=2048, reward_function=None, reward_model_config=None):
+    def __init__(self, dataloader: IterableDataset, max_step=1024, reward_function=None, reward_model_config=None):
         """
         Args:
             dataloader (IterableDataset): generate rl data iteratively
@@ -22,7 +22,7 @@ class TxtEnv(object):
 
         self._cur_messagess = []
         self.max_step = max_step
-        self.max_gen_bs = 8
+        self.max_gen_bs = 32
         self.clip_reward_min = - 1.5
         self.clip_reward_max = 1.5
         self.generate_config = {'do_sample': True, 
@@ -39,13 +39,13 @@ class TxtEnv(object):
         sample_data = next(self.dataloader)
 
         ppo_input_messages = []
-        sft_input_messages = []
+        pt_input_messages = []
         for data in sample_data:
             message = data.message
             if data.mes_type == "ppo":
                 ppo_input_messages.append(message)
-            elif data.mes_type == "sft":
-                sft_input_messages.append(message)
+            elif data.mes_type == "pt":
+                pt_input_messages.append(message)
             else:
                 raise TypeError(f"Wrong message type {data.mes_type}")
 
@@ -61,11 +61,11 @@ class TxtEnv(object):
         trajectories["rewards"] = rewards
         trajectories["clipped_rewards"] = clipped_rewards
 
-        # sft data
-        if len(sft_input_messages) > 0:
-            sft_inputs = [policy_model.tokenizer.apply_chat_template(mes, tokenize=False, add_generation_prompt=False, return_tensors="pt") for mes in sft_input_messages]
-            trajectories.sft_data = policy_model.tokenizer(sft_inputs, return_tensors="pt", padding=True)
-            print(f"[TxtEnv & {policy_model.__class__.__name__}] gets {len(sft_input_messages)} sft episodes.")
+        # pretrain data
+        if len(pt_input_messages) > 0:
+            pt_inputs = [policy_model.tokenizer.apply_chat_template(mes, tokenize=False, add_generation_prompt=False, return_tensors="pt") for mes in pt_input_messages]
+            trajectories.pt_data = policy_model.tokenizer(pt_inputs, return_tensors="pt", padding=True)
+            print(f"[TxtEnv & {policy_model.__class__.__name__}] gets {len(pt_input_messages)} pretrain episodes.")
 
         return trajectories
     
@@ -97,9 +97,9 @@ if __name__ == "__main__":
 
     dataset_config = {
         "ppo_data_filename": "data/config/1.8B_ppo.json",
-        "sft_data_filename": "data/config/1.8B_sft.json",
+        "pt_data_filename": "data/config/1.8B_pt.json",
         "num_samples_each_epoch": 10,
-        "sft_data_samples": 2,
+        "pt_data_samples": 2,
         "tokenizer": tokenizer,
         "max_seq_len": 4096,
         "random_seed": 1024,
@@ -146,7 +146,7 @@ if __name__ == "__main__":
     trajectories = txt_env.rollout(policy_model=actor_model)
     
     print(dir(trajectories))
-    print(trajectories.sft_data.input_ids.shape)
-    print(trajectories.sft_data.attention_mask.shape)
+    print(trajectories.pt_data.input_ids.shape)
+    print(trajectories.pt_data.attention_mask.shape)
     # for i, s in enumerate(trajectories.output_str):
     #     print(f"[REPLY {i} BGN] {'#' * 20}\n{s}\n[REPLY {i} END] {'#' * 20}\n")

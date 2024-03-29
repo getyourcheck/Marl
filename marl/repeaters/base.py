@@ -97,7 +97,7 @@ class BaseRepeater(object):
         return finnal_rewards, policy_logprobs, sft_logprobs, kl_distance
 
     def _get_values(self, trajectories: PolicyOutput, value_model):
-        value_output = value_model.infer(trajectories.output_ids, attention_mask=trajectories.answer_mask, output_logits=True, micro_batch_size=self.max_infer_bs,)
+        value_output = value_model.infer(trajectories.output_ids, attention_mask=trajectories.answer_mask, output_logits=True, micro_batch_size=32,)
         values_with_last_value = value_output.logits.cpu() * trajectories.answer_mask.cpu()
         return values_with_last_value
 

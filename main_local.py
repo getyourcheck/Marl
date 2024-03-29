@@ -31,16 +31,20 @@ if __name__ == "__main__":
     tokenizer.padding_side = "left"
 
     dataset_config = {
-        # "ppo_data_filename": "data/config/1.8B_ppo.json",
-        # "sft_data_filename": "data/config/1.8B_sft.json",
-        "ppo_data_filename": "data/config/task_ppo.json",
-        # "sft_data_filename": "data/config/task_sft.json",
-        "num_samples_each_epoch": 16,
-        # "sft_data_samples": 2,
+        "ppo_datas": ["/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/0801-train.json::0.1",
+                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/ANLI-0904-train.json::0.1",
+                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/COIG-0906-train.json::0.1",
+                      ],
+        "pt_datas": ["./data/pt_data/pt_data_0.json::0.9",
+                     "./data/pt_data/pt_data_1.json::0.3",
+                     ],
+        "num_samples_each_epoch": 10,
+        "pt_data_samples": 2,
         "tokenizer": tokenizer,
-        "max_seq_len": 4096,
+        "max_seq_len": 1024,
         "random_seed": 1024,
     }
+
     # init model
     from marl.config import Config
     from marl.model_backend.hf_model_runner import HfModelRunner
@@ -133,7 +137,7 @@ if __name__ == "__main__":
     # init trainer
     train_config = {
         "ppo_minibatch": 8,
-        # "sft_minibatch": 1,
+        # "pt_minibatch": 1,
         "value_minibatch": 8
     }
     ppo = PPOTrainer(policy_model=actor_model, value_model=None, train_cfg=train_config)

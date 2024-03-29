@@ -115,6 +115,7 @@ class HfModelRunner:
 
         optimizer_type = train_kwargs.get("optimizer", torch.optim.AdamW)
         learning_rate = train_kwargs.get("lr", 1e-5)
+        self.clip_grad_norm = train_kwargs.get("clip_grad_norm", 1.0)
         self.optimizer: torch.optim.Optimizer = optimizer_type(
             params=self.model.parameters(),
             lr=learning_rate,
@@ -137,7 +138,7 @@ class HfModelRunner:
         self.device = self.accelerator.device
         set_seed(self.model_config.get("seed"))
 
-        logger.info(f"[{self.model_type}] __init__() done with train_kwargs.")
+        logger.info(f"[{self.model_type}] __init__() done with optimizer {self.optimizer.optimizer}.")
 
     # Training
     def compute_loss_and_backward(
@@ -250,6 +251,7 @@ class HfModelRunner:
         logger.info(f"[{self.model_type}] self.parameter_update()")
         self.step += 1
         if self.step % step_interval == 0:
+            self.accelerator.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
             self.optimizer.step()
             self.lr_scheduler.step()
             self.optimizer.zero_grad()

@@ -1,7 +1,8 @@
 from ..policy_output import PolicyOutput
 import numpy as np
 import torch
-from copy import deepcopy
+from marl.model_server.base_model_server import BaseModelServer
+import time
 
 def find_mask_begin(padded_datas, mask_id=0):
     """
@@ -24,24 +25,44 @@ def find_mask_begin(padded_datas, mask_id=0):
 
 
 class BaseRepeater(object):
-    def __init__(self, sft_model, reward_scale: bool = False,
-                        fine_grained_rm: bool = False,
-                        value_ema: bool = False,
-                        **kwargs):
+    def __init__(
+            self, 
+            sft_model, 
+            reward_scale: bool = False,
+            fine_grained_rm: bool = False,
+            value_ema: bool = False,
+            actor_micro_bs:int=8,
+            ref_micro_bs:int=8,
+            critic_micro_bs:int=32,
+            kl_coeff = 0.02,
+            gamma = 1.0,
+            gae_lambda = 0.95,
+            answer_end_id = 92542,
+            norm_adv = True,
+            **kwargs,
+        ):
         self.sft_model = sft_model
-        self.max_infer_bs = 8
+        self.actor_micro_bs = actor_micro_bs
+        self.ref_micro_bs = ref_micro_bs
+        self.critic_micro_bs = critic_micro_bs
         self.reward_scale = reward_scale
         self.fine_grained_rm = fine_grained_rm
         self.value_ema = value_ema
-        self.kl_coeff = 0.02
-        self.gamma = 1.0
-        self.gae_lambda = 0.95
-        self.answer_end_id = 92542
-        self.norm_adv = True
+        self.kl_coeff = kl_coeff
+        self.gamma = gamma
+        self.gae_lambda = gae_lambda
+        self.answer_end_id = answer_end_id
+        self.norm_adv = norm_adv
 
-    def process(self, trajectories: PolicyOutput, policy_model, value_model, sft_model=None):
+    def process(
+            self, 
+            trajectories:PolicyOutput, 
+            policy_model:BaseModelServer, 
+            value_model:BaseModelServer, 
+            sft_model:BaseModelServer=None
+        ):
         if sft_model is not None:
-            self.sft_model = sft_model
+            self.sft_model:BaseModelServer = sft_model
         kl_rewards, policy_logprobs, sft_logprobs, kl_distance = self._get_kl_rewards(trajectories, policy_model)
         trajectories["kl_distance"] = kl_distance
         trajectories["kl_rewards"] = kl_rewards
@@ -63,14 +84,30 @@ class BaseRepeater(object):
 
         return trajectories
 
-    def _get_kl_rewards(self, trajectories: PolicyOutput, policy_model):
+    def _get_kl_rewards(self, trajectories: PolicyOutput, policy_model:BaseModelServer):
         # rewards = trajectories.rewards
         rewards = trajectories.clipped_rewards
         answer_mask = trajectories.answer_mask.cpu()
         attention_mask = trajectories.attention_mask.cpu()
+        s_t = time.time()
+        policy_output = policy_model.infer_async(
+            inputs=trajectories.output_ids, 
+            micro_batch_size=self.actor_micro_bs, 
+            attention_mask=attention_mask, 
+            output_logits=False, 
+            output_logprobs=True
+        )
+        sft_output = self.sft_model.infer_async(
+            inputs=trajectories.output_ids, 
+            micro_batch_size=self.ref_micro_bs, 
+            attention_mask=attention_mask, 
+            output_logits=False, 
+            output_logprobs=True
+        )
+        policy_output = policy_model.infer_get(policy_output)
+        sft_output = policy_model.infer_get(sft_output)
+        print(f"[actor & ref infer_async] duration: {round(time.time() - s_t, 2)} s")
 
-        policy_output = policy_model.infer(trajectories.output_ids, micro_batch_size=self.max_infer_bs, attention_mask=attention_mask, output_logits=False, output_logprobs=True)
-        sft_output = self.sft_model.infer(trajectories.output_ids, micro_batch_size=self.max_infer_bs, attention_mask=attention_mask, output_logits=False, output_logprobs=True)
         policy_logprobs = policy_output.logprobs.cpu() * answer_mask
         sft_logprobs = sft_output.logprobs.cpu() * answer_mask
 
@@ -96,8 +133,15 @@ class BaseRepeater(object):
 
         return finnal_rewards, policy_logprobs, sft_logprobs, kl_distance
 
-    def _get_values(self, trajectories: PolicyOutput, value_model):
-        value_output = value_model.infer(trajectories.output_ids, attention_mask=trajectories.answer_mask, output_logits=True, micro_batch_size=32,)
+    def _get_values(self, trajectories: PolicyOutput, value_model:BaseModelServer):
+        s_t = time.time()
+        value_output = value_model.infer(
+            inputs = trajectories.output_ids, 
+            attention_mask=trajectories.answer_mask, 
+            output_logits=True, 
+            micro_batch_size=self.critic_micro_bs,
+        )
+        print(f"[critic infer] duration: {round(time.time() - s_t, 2)} s")
         values_with_last_value = value_output.logits.cpu() * trajectories.answer_mask.cpu()
         return values_with_last_value
 

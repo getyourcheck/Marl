@@ -1,43 +1,43 @@
-from abc import abstractmethod
 import time
-import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 from copy import deepcopy
-
+from marl.model_server.base_model_server import BaseModelServer
 
 class TxtEnv(object):
     """
     A generic RL environment to generate textual sequences.
     """
 
-    def __init__(self, dataloader: IterableDataset, max_step=1024, reward_function=None, reward_model_config=None):
+    def __init__(
+            self, 
+            dataloader: IterableDataset, 
+            max_new_tokens:int=1024, 
+            actor_micro_bs:int=32,
+            reward_micro_bs:int=32,
+            clip_reward_min:int=-1.5,
+            clip_reward_max:int=1.5,
+            reward_function:BaseModelServer=None, 
+            generate_kwargs:dict=None,
+            **kwargs,
+        ):
         """
         Args:
             dataloader (IterableDataset): generate rl data iteratively
             reward_function: reward function that computes scalar reward for each episode
         """
-        self.dataloader = iter(dataloader)
-        self.reward_function = reward_function
-
+        self.dataloader:IterableDataset = iter(dataloader)
+        self.reward_function:BaseModelServer = reward_function
         self._cur_messagess = []
-        self.max_step = max_step
-        self.max_gen_bs = 32
-        self.clip_reward_min = - 1.5
-        self.clip_reward_max = 1.5
-        self.generate_config = {'do_sample': True, 
-                                'temperature': 1.0, 
-                                'top_k': 0, 
-                                'top_p': 0.9, 
-                                'min_new_tokens': 1,
-                                'num_beams': 1, 
-                                'eos_token_id': 92542, 
-                                'pad_token_id': 0}
+        self.max_new_tokens = max_new_tokens
+        self.actor_micro_bs = actor_micro_bs
+        self.reward_micro_bs = reward_micro_bs
+        self.clip_reward_min = clip_reward_min
+        self.clip_reward_max = clip_reward_max
+        self.generate_kwargs:dict = generate_kwargs
 
-    def rollout(self, policy_model, display=False):
-        s_t = time.time()
+    def rollout(self, policy_model:BaseModelServer, display=False):
         sample_data = next(self.dataloader)
-
         ppo_input_messages = []
         pt_input_messages = []
         for data in sample_data:
@@ -50,12 +50,15 @@ class TxtEnv(object):
                 raise TypeError(f"Wrong message type {data.mes_type}")
 
         # ppo data
-        trajectories = policy_model.generate(inputs=ppo_input_messages, 
-                                        micro_batch_size=self.max_gen_bs, 
-                                        step=self.max_step,
-                                        output_str=True, 
-                                        generate_kwargs=self.generate_config)
-        print(f"[TxtEnv & {policy_model.__class__.__name__}] {round(time.time() - s_t, 2)}s generate {len(ppo_input_messages)} ppo episodes.")
+        s_t = time.time()
+        trajectories = policy_model.generate(
+            inputs=ppo_input_messages, 
+            micro_batch_size=self.actor_micro_bs, 
+            step=self.max_new_tokens,
+            output_str=True, 
+            generate_kwargs=self.generate_kwargs
+        )
+        print(f"[actor generate] duration: {round(time.time() - s_t, 2)} s, len(inputs): {len(ppo_input_messages)} ")
         rewards = self._get_reward(ppo_input_messages, trajectories)
         clipped_rewards = torch.clamp(rewards, min=self.clip_reward_min, max=self.clip_reward_max)
         trajectories["rewards"] = rewards
@@ -71,14 +74,22 @@ class TxtEnv(object):
     
     def _get_reward(self, input_messages, policyout):
         input_messages = deepcopy(input_messages)
-        if self.reward_function is not None:
-            for i in range(len(range(len(policyout.output_ans_str)))):
-                input_messages[i].append({"role": "assistant", "content": policyout.output_ans_str[i]})
-            rm_out = self.reward_function.infer(input_messages, output_logprobs=False,micro_batch_size=self.max_gen_bs)
-            rewards = rm_out.logits.cpu().squeeze(-1)
-            return rewards
-        print(f"[TxtEnv] No reward funtion, no reward provided.")
-        return None
+        if self.reward_function is None:
+            print(f"[TxtEnv] No reward funtion, no reward provided.")
+            return None
+        for i in range(len(range(len(policyout.output_ans_str)))):
+            input_messages[i].append({"role": "assistant", "content": policyout.output_ans_str[i]})
+        s_t = time.time()
+        rm_out = self.reward_function.infer(
+            input_messages, 
+            output_logprobs=False, 
+            micro_batch_size=self.reward_micro_bs
+        )
+        print(f"[reward infer] duration: {round(time.time() - s_t, 2)} s")
+        rewards = rm_out.logits.cpu().squeeze(-1)
+        return rewards
+    
+
 
 
 if __name__ == "__main__":

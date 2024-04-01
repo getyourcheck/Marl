@@ -38,6 +38,7 @@ class BaseModelServer:
         # Tokenizer is initialized in ModelServer (not ModelTrainer) to avoid remote call
         # FIXME: os.environ["TOKENIZERS_PARALLELISM"] = "false"
         self.tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
+        self.tokenizer.pad_token = self.tokenizer.unk_token
         trainer_config["tokenizer_pad_token_id"] = self.tokenizer.pad_token_id
 
         if self.trainer_type == ENGINE_HUGGINGFACE:

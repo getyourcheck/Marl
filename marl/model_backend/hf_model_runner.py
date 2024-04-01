@@ -138,7 +138,7 @@ class HfModelRunner:
         self.device = self.accelerator.device
         set_seed(self.model_config.get("seed"))
 
-        logger.info(f"[{self.model_type}] __init__() done with optimizer {self.optimizer.optimizer}.")
+        self.info_rank0(f"[{self.model_type}] __init__() done with optimizer {self.optimizer.optimizer}.")
 
     # Training
     def compute_loss_and_backward(
@@ -158,9 +158,6 @@ class HfModelRunner:
         """
         if isinstance(input_ids, torch.Tensor):  # returns torch.Tensor
             # rarely, since self.train() changes all input_ids to [input_ids]
-            logger.info(
-                f"[{self.model_type}] self.compute_loss_and_backward() for 1 input batch"
-            )
             loss = self.compute_loss(input_ids, labels, attention_mask, criterion)
             loss /= gradient_accumulation_steps
             self.accelerator.backward(loss)
@@ -169,9 +166,6 @@ class HfModelRunner:
         elif type(input_ids) == list:  # returns list[torch.Tensor]
             # multiple inputs grouped to compute loss, see:
             # https://stackoverflow.com/questions/53994625/how-can-i-process-multi-loss-in-pytorch
-            logger.info(
-                f"[{self.model_type}] self.compute_loss_and_backward() for input batches"
-            )
             assert (
                 len(input_ids)
                 == len(labels)
@@ -203,7 +197,6 @@ class HfModelRunner:
         loss_weight: Optional[float] = None,
         **_ignored,
     ) -> torch.Tensor:
-        logger.info(f"[{self.model_type}] compute_loss input shape[{input_ids.shape}]")
         input_ids = input_ids.to(self.device)
         labels = input_ids.clone() if labels is None else labels
         batch = {
@@ -248,7 +241,7 @@ class HfModelRunner:
         return loss
 
     def parameter_update(self, step_interval=1):
-        logger.info(f"[{self.model_type}] self.parameter_update()")
+        self.info_rank0(f"[{self.model_type}] self.parameter_update()")
         self.step += 1
         if self.step % step_interval == 0:
             self.accelerator.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
@@ -270,7 +263,6 @@ class HfModelRunner:
         debug = False,
         **_ignored,
     ):
-        logger.info(f"[{self.model_type}] self.train()")
         return_list = True
 
         if isinstance(input_ids, torch.Tensor):
@@ -283,6 +275,8 @@ class HfModelRunner:
             return_list = False
 
         if micro_batch_size is None:
+            for i in range(len(input_ids)):    
+                self.info_rank0(f"[{self.model_type}] train input_ids[{i}] shape[{input_ids[i].shape}]")
             origin_loss = self.compute_loss_and_backward(
                 input_ids, labels, attention_mask, criterion, loss_weights
             )
@@ -292,7 +286,7 @@ class HfModelRunner:
                 input_ids, micro_batch_size, labels, attention_mask, loss_weights
             )
             origin_loss_list_mb = []
-            for micro_batch in micro_batches:
+            for index, micro_batch in enumerate(micro_batches):
                 input_ids_mb = []
                 attention_mask_mb = []
                 labels_mb = []
@@ -302,7 +296,9 @@ class HfModelRunner:
                     attention_mask_mb.append(micro_batch[i]["attention_mask"])
                     labels_mb.append(micro_batch[i]["labels"])
                     loss_weights_mb.append(micro_batch[i]["loss_weights"])
-
+                if index == 0:
+                    for i in range(len(input_ids_mb)):
+                        self.info_rank0(f"[{self.model_type}] will train input_ids_mb[{i}] shape[{input_ids_mb[i].shape}] * {len(micro_batches)} times")
                 origin_loss_mb = self.compute_loss_and_backward(
                     input_ids_mb,
                     labels_mb,
@@ -333,7 +329,6 @@ class HfModelRunner:
         **_ignored,
     ) -> PolicyOutput:
         assert isinstance(input_ids, torch.Tensor)
-        logger.info(f"[{self.model_type}] _infer() input_ids.shape: {input_ids.shape}")
         model_output = self.model(
             input_ids.to(self.device),
             output_attentions=output_attentions,
@@ -379,7 +374,7 @@ class HfModelRunner:
         debug=False,
         **_ignored,
     ) -> PolicyOutput:
-        logger.info(f"[{self.model_type}] self.infer() kwargs: {infer_kwargs}")
+        self.info_rank0(f"[{self.model_type}] self.infer() kwargs: {infer_kwargs}")
         if not isinstance(inputs, torch.Tensor):
             input_ids, attention_mask = marl_util.encode(inputs, self.tokenizer)
             if self.model_type == MODEL_TYPE_REWARD:
@@ -394,6 +389,7 @@ class HfModelRunner:
             attention_mask = attention_mask.to(self.device)
 
         if micro_batch_size < 0:  # returns entire-input-as-one-batch inference results 
+            self.info_rank0(f"[{self.model_type}] infer() input_ids.shape: {input_ids.shape}")
             return self._infer(
                 input_ids,
                 attention_mask,
@@ -409,9 +405,11 @@ class HfModelRunner:
             input_ids, micro_batch_size, attention_mask
         )
         policy_outputs = []
-        for micro_batch in micro_batches:
+        for index, micro_batch in enumerate(micro_batches):
             input_ids_mb = micro_batch["input_ids"]
             attention_mask_mb = micro_batch["attention_mask"]
+            if index == 0:
+                self.info_rank0(f"[{self.model_type}] will infer() input_ids_mb.shape: {input_ids_mb.shape} * {len(micro_batches)} times")
             policy_output_mb = self._infer(
                 input_ids_mb,
                 attention_mask_mb,
@@ -467,7 +465,7 @@ class HfModelRunner:
         )
 
         output_ids = model_output["sequences"]
-        logger.info(
+        self.info_rank0(
             f"generate input_ids shape:[{input_ids.shape}], output_ids shape:[{output_ids.shape}]"
         )
         output = PolicyOutput(output_ids=output_ids)
@@ -518,7 +516,7 @@ class HfModelRunner:
         debug=False,
         **_ignored,
     ) -> PolicyOutput:
-        logger.info(f"[{self.model_type}] self.generate() kwargs: {generate_kwargs}")
+        self.info_rank0(f"[{self.model_type}] self.generate() kwargs: {generate_kwargs}")
         if not isinstance(inputs, torch.Tensor):
             input_ids, attention_mask = marl_util.encode(
                 inputs, self.tokenizer, add_generation_prompt=True
@@ -574,15 +572,19 @@ class HfModelRunner:
         set_seed(seed)
 
     def save_model(self, path):
-        # TODO: ONLY RANK 0
-        model = self.model
-        if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
-            model = self.accelerator.unwrap_model(self.model)
-        if not os.path.exists(path):
-            os.makedirs(path)
-        model.save_pretrained(path, from_pt=True)
-        logger.info(f"save model to {path}")
-
+        if torch.distributed.get_rank() == 0:
+            model = self.model
+            if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
+                model = self.accelerator.unwrap_model(self.model)
+            if not os.path.exists(path):
+                os.makedirs(path)
+            model.save_pretrained(path, from_pt=True)
+            logger.info(f"save model to {path}")
+    
+    def info_rank0(self,content):
+        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+            logger.info(content)
+            
 
 import ray
 from ray.util.placement_group import (

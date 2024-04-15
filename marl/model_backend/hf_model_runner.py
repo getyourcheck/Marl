@@ -645,7 +645,15 @@ class HfModelRunnerRayActorGroup:
                 for rank, actor in enumerate(self.ray_actors)
             ]
         )
-        ray.get([actor.initialize.remote() for actor in self.ray_actors])
+        self.initialize_ref = [actor.initialize.remote() for actor in self.ray_actors]
+
+    def init_get(self):
+        if self.initialize_ref is not None:
+            ray.get(self.initialize_ref)
+        else:
+            # could be called twice if self.generator == self.trainer
+            logger.warning("self.initialize_ref is None when calling init_get()")
+        self.initialize_ref = None
 
     # Training
     def train_async(self,input_ids, labels, attention_mask, *args, **kwargs):

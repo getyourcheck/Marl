@@ -33,11 +33,11 @@ repeater_config=dict(
     norm_adv = True,
 )
 train_config=dict(
-    ppo_minibatch=512,
-    value_minibatch=512,
+    ppo_minibatch=64,
+    value_minibatch=64,
     actor_micro_bs=2,
     critic_micro_bs=2,
-    pretrain_step=40,
+    pretrain_step=0,
     save_interval=80,
 )
 
@@ -121,7 +121,7 @@ model_configs=dict(
 )
 
 dataset_config = {
-        "num_samples_each_epoch": 512,
+        "num_samples_each_epoch": 64,
         "max_seq_len": 1024,
         "random_seed": 1024,
         "ppo_datas": [

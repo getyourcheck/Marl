@@ -39,7 +39,10 @@ class Coordinator:
 
     def _schedule(self):
         for model_name, model in self.model_dict.items():  # naive serial initialize
-            model.initialize()
+            model.initialize_async()
+            print(f"[{self.__class__.__name__}] {model_name} {model.__class__.__name__}.is_initialized: {model.is_initialized}")
+        for model_name, model in self.model_dict.items():  # naive serial initialize
+            model.initialize_get()
             print(f"[{self.__class__.__name__}] {model_name} {model.__class__.__name__}.is_initialized: {model.is_initialized}")
 
     def clean_up(self):

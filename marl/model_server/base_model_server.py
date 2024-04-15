@@ -22,7 +22,7 @@ class BaseModelServer:
             f"[{self.__class__.__name__}] model_name={model_name}, model_config={model_config}"
         )
 
-    def initialize(self):
+    def initialize_async(self):
         model_path: str = self.model_config["model_path"]  # requisite
         self.model_type: str = self.model_config["model_type"]  # requisite
         if self.model_type == MODEL_TYPE_REWARD:
@@ -68,6 +68,11 @@ class BaseModelServer:
                     raise ValueError(
                         f"No generator is registered with type '{self.generator_type}'."
                     )
+
+    def initialize_get(self):
+        self.trainer.init_get()
+        if self.generator is not None:
+            self.generator.init_get()
 
         self.is_initialized = True
         print(

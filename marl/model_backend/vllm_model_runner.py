@@ -1,16 +1,12 @@
 import torch
 from typing import Optional, Union
 
-import vllm
 from vllm import LLM, SamplingParams
 from vllm.sampling_params import _SAMPLING_EPS
 
-from marl.logger import init_logger
-from marl import utils as marl_util
-from marl.policy_output import PolicyOutput, concat_policy_outputs
-from marl.model_backend.generate_utils import get_question_answer_mask
-from .dist_utils import init_process_group
-import deepspeed
+from ..logger import init_logger
+from ..policy_output import PolicyOutput, concat_policy_outputs
+from ..model_backend.generate_utils import get_question_answer_mask
 
 logger = init_logger(__name__)
 
@@ -190,6 +186,7 @@ class VllmGeneratorRayActor(VllmGenerator, RayActorMixin):
 class VllmGeneratorRayActorGroup:
     def __init__(self, name: str, config: dict):
         self.released = True
+        self.config = config
         self.tp_size = get_tp_size(config)  # tensor parallelism
         self.dp_size = get_dp_size(config)  # num of vllm_engines
         # assert dp_size == 1  # TODO: multiple vllm engines
@@ -226,15 +223,15 @@ class VllmGeneratorRayActorGroup:
         self.released = False
         self.initialize_ref = [actor.initialize.remote() for actor in self.ray_actors]
 
-    def init_get(self):
+    def initialize_get(self):
         shared_with_trainer = self.config.get("shared_with_trainer", False)
         if shared_with_trainer:
             assert self.initialize_ref is None
-            return  # assuming trainer.init_get() has been called
+            return  # assuming trainer.initialize_get() has been called
         if self.initialize_ref is not None:
             ray.get(self.initialize_ref)
         else:
-            logger.warning("self.initialize_ref is None when calling init_get()")
+            logger.warning("self.initialize_ref is None when calling initialize_get()")
         self.initialize_ref = None
 
     # Generation

@@ -61,11 +61,9 @@ class TxtEnv(object):
         print(f"[actor generate] duration: {round(time.time() - s_t, 2)} s, len(inputs): {len(ppo_input_messages)} ")
         assert trajectories.output_str is not None
         assert len(trajectories.output_ids.shape) == 2
-        print("[actor generate] trajectories.output_ids:", trajectories.output_ids.shape, '\n', trajectories.output_ids)
-        assert len(trajectories.answer_mask.shape) == 2
-        print("[actor generate] trajectories.answer_mask:", trajectories.answer_mask.shape, '\n', trajectories.answer_mask)
-        assert len(trajectories.question_mask.shape) == 2
-        print("[actor generate] trajectories.question_mask:", trajectories.question_mask.shape, '\n', trajectories.question_mask)
+        print("[actor generate] trajectories.output_ids:", trajectories.output_ids.shape)
+        assert trajectories.answer_mask.shape == trajectories.output_ids.shape
+        assert trajectories.question_mask.shape == trajectories.output_ids.shape
 
         rewards = self._get_reward(ppo_input_messages, trajectories)
         clipped_rewards = torch.clamp(rewards, min=self.clip_reward_min, max=self.clip_reward_max)

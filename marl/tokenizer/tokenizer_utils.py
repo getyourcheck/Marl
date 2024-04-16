@@ -65,3 +65,23 @@ def get_tokenizer(
             "slowdown. Consider using a fast tokenizer instead."
         )
     return tokenizer
+
+
+def encode(
+    inputs: Union[list[str], list[list[dict]]],
+    tokenizer,
+    add_generation_prompt: bool = False,
+):
+    if isinstance(inputs[0], list):
+        # e.g., inputs = [[{"role": "user", "content": prompt_str}] for _ in range(10)]
+        inputs = [
+            tokenizer.apply_chat_template(
+                input,
+                tokenize=False,
+                add_generation_prompt=add_generation_prompt,
+                return_tensors="pt",
+            )
+            for input in inputs
+        ]
+    output = tokenizer(inputs, return_tensors="pt", padding=True)
+    return output.input_ids, output.attention_mask

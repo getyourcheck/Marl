@@ -1,14 +1,15 @@
 import ray
 import torch
-import marl.utils as marl_util
 from transformers import AutoConfig
 from typing import Optional
+
+from ..config_consts import *
 from ..model_backend import (
     HfModelRunnerRayActorGroup,
     VllmGeneratorRayActorGroup,
 )
-from ..tokenizer.tokenizer_utils import get_tokenizer
-from ..config_consts import *
+from ..tokenizer import tokenizer_utils
+from ..utils import expand_reward_token_id
 
 
 class BaseModelServer:
@@ -41,7 +42,9 @@ class BaseModelServer:
         trainer_config["tokenizer_path"] = tokenizer_path
         # Tokenizer is initialized in ModelServer (not ModelTrainer) to avoid remote call
         # FIXME: os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        self.tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
+        self.tokenizer = tokenizer_utils.get_tokenizer(
+            tokenizer_path, trust_remote_code=True
+        )
         self.tokenizer.pad_token = self.tokenizer.unk_token
         trainer_config["tokenizer_pad_token_id"] = self.tokenizer.pad_token_id
 
@@ -78,9 +81,9 @@ class BaseModelServer:
                     )
 
     def initialize_get(self):
-        self.trainer.init_get()
+        self.trainer.initialize_get()
         if self.generator is not None:
-            self.generator.init_get()
+            self.generator.initialize_get()
 
         self.is_initialized = True
         print(
@@ -130,9 +133,9 @@ class BaseModelServer:
     # Inference
     def infer_async(self, inputs, attention_mask=None, *args, **infer_kwargs):
         if not isinstance(inputs, torch.Tensor):
-            input_ids, attention_mask = marl_util.encode(inputs, self.tokenizer)
+            input_ids, attention_mask = tokenizer_utils.encode(inputs, self.tokenizer)
             if self.model_type == MODEL_TYPE_REWARD:
-                input_ids, attention_mask = marl_util.expand_reward_token_id(
+                input_ids, attention_mask = expand_reward_token_id(
                     self.reward_token_id, input_ids, attention_mask
                 )
         else:
@@ -153,7 +156,7 @@ class BaseModelServer:
         if isinstance(inputs, torch.Tensor):
             input_ids = inputs
         elif isinstance(inputs, list):
-            input_ids, attention_mask = marl_util.encode(
+            input_ids, attention_mask = tokenizer_utils.encode(
                 inputs, self.tokenizer, add_generation_prompt=True
             )
         else:

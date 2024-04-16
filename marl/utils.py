@@ -2,7 +2,7 @@ import torch
 import random
 import numpy as np
 import os
-from typing import Optional, Union
+from typing import Optional
 
 DEFAULT_SEED_NUMBER = 1234
 
@@ -24,18 +24,18 @@ def set_seed(seed: int = DEFAULT_SEED_NUMBER):
         "CUBLAS_WORKSPACE_CONFIG", os.environ.get("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
     )
 
-def encode(inputs: Union[list[str], list[list[dict]]], tokenizer, add_generation_prompt:bool=False):
-    if isinstance(inputs[0], list):
-        # e.g., inputs = [[{"role": "user", "content": prompt_str}] for _ in range(10)]
-        inputs = [tokenizer.apply_chat_template(input, tokenize=False, add_generation_prompt=add_generation_prompt, return_tensors="pt") for input in inputs]
-    output = tokenizer(inputs, return_tensors="pt", padding=True)
-    return output.input_ids, output.attention_mask
 
-def expand_reward_token_id(reward_token_id:int, input_ids:torch.Tensor, attention_mask:Optional[torch.Tensor]=None):
+def expand_reward_token_id(
+    reward_token_id: int,
+    input_ids: torch.Tensor,
+    attention_mask: Optional[torch.Tensor] = None,
+):
     input_ids = torch.cat(
         [
             input_ids,
-            torch.tensor([[reward_token_id]], dtype=torch.long).expand(input_ids.shape[0], 1),
+            torch.tensor([[reward_token_id]], dtype=torch.long).expand(
+                input_ids.shape[0], 1
+            ),
         ],
         dim=1,
     ).to(input_ids.device)

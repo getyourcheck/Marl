@@ -1,9 +1,10 @@
 import torch
 import os
+from typing import Optional, Union
+import socket
+
 from torch.nn.modules.loss import _Loss
 from torch.optim.lr_scheduler import _LRScheduler
-
-from typing import Optional, Union
 from accelerate import Accelerator
 from accelerate.utils import FullyShardedDataParallelPlugin
 from transformers import (
@@ -13,25 +14,22 @@ from transformers import (
 )
 from transformers.generation.utils import GenerateDecoderOnlyOutput
 
-from ..policy_output import PolicyOutput, logprobs_from_logits
-from ..utils import set_seed
-from ..tokenizer.tokenizer_utils import get_tokenizer
-from .models.internlm2_reward import (
-    InternLM2ForRewardModel,
-    InternLM2ForCriticModel,
-)
-from ..config_consts import *
 from .generate_utils import (
     get_question_answer_mask,
     partition_by_micro_batch_size,
     partition_list_by_micro_batch_size,
     merge_loss_list,
 )
-import marl.utils as marl_util
-from marl.logger import init_logger
+from ..config_consts import *
+from ..logger import init_logger
+from ..policy_output import PolicyOutput, logprobs_from_logits
+from ..tokenizer import tokenizer_utils
+from ..utils import set_seed, expand_reward_token_id
 from .dist_utils import init_process_group
-import socket
-import deepspeed
+from .models.internlm2_reward import (
+    InternLM2ForRewardModel,
+    InternLM2ForCriticModel,
+)
 
 logger = init_logger(__name__)
 DEFAULT_NEW_TOKENS = 64
@@ -91,7 +89,9 @@ class HfModelRunner:
 
         # 2. Tokenizer
         tokenizer_path = self.model_config.get("tokenizer_path", model_path)
-        self.tokenizer = get_tokenizer(tokenizer_path, trust_remote_code=True)
+        self.tokenizer = tokenizer_utils.get_tokenizer(
+            tokenizer_path, trust_remote_code=True
+        )
         self.tokenizer.pad_token = self.tokenizer.unk_token
         if self.tokenizer.chat_template is None:
             raise NotImplementedError("Make sure tokenizer has chat_template.")
@@ -394,9 +394,9 @@ class HfModelRunner:
     ) -> PolicyOutput:
         self.info_rank0(f"[{self.model_type}] self.infer() kwargs: {infer_kwargs}")
         if not isinstance(inputs, torch.Tensor):
-            input_ids, attention_mask = marl_util.encode(inputs, self.tokenizer)
+            input_ids, attention_mask = tokenizer_utils.encode(inputs, self.tokenizer)
             if self.model_type == MODEL_TYPE_REWARD:
-                input_ids, attention_mask = marl_util.expand_reward_token_id(
+                input_ids, attention_mask = expand_reward_token_id(
                     self.model.reward_token_id, input_ids, attention_mask
                 )
         else:
@@ -542,7 +542,7 @@ class HfModelRunner:
             f"[{self.model_type}] self.generate() kwargs: {generate_kwargs}"
         )
         if not isinstance(inputs, torch.Tensor):
-            input_ids, attention_mask = marl_util.encode(
+            input_ids, attention_mask = tokenizer_utils.encode(
                 inputs, self.tokenizer, add_generation_prompt=True
             )
         else:
@@ -678,7 +678,11 @@ class HfModelRunnerRayActor(HfModelRunner, RayActorMixin):
                         param.data, 0, group=self._model_update_group
                     )
             else:
-                with deepspeed.zero.GatheredParameters([param]):
+                from deepspeed.runtime.zero.partition_parameters import (
+                    GatheredParameters,
+                )
+
+                with GatheredParameters([param]):
                     if self.accelerator.is_main_process:
                         torch.distributed.broadcast(
                             param.data, 0, group=self._model_update_group
@@ -727,12 +731,12 @@ class HfModelRunnerRayActorGroup:
         )
         self.initialize_ref = [actor.initialize.remote() for actor in self.ray_actors]
 
-    def init_get(self):
+    def initialize_get(self):
         if self.initialize_ref is not None:
             ray.get(self.initialize_ref)
         else:
             # could be called twice if self.generator == self.trainer
-            logger.warning("self.initialize_ref is None when calling init_get()")
+            logger.warning("self.initialize_ref is None when calling initialize_get()")
         self.initialize_ref = None
 
     # Training

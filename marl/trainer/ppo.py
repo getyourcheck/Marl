@@ -7,6 +7,7 @@ sys.path.extend(["./", "marl/dataset"])
 from marl.loss.actor_loss import ActorLoss
 from marl.loss.critic_loss import CriticLoss
 from marl.loss.pretrain_loss import PretrainLoss
+from marl.timer import Timer
 
 
 class PPOTrainer(object):
@@ -91,9 +92,12 @@ class PPOTrainer(object):
                     criterion=self.policy_criterion,
                     micro_batch_size=self.actor_micro_bs
                 )
+                
                 print(f"[actor train] duration: {round(time.time() - s_t, 2)} s, {self.policy_minibatch} batch, Policy loss: {p_loss.item()}")
                 policy_loss.append(p_loss.item())
 
+        with Timer("policy_model.sync_model") as t:
+            policy_model.sync_model()
         return policy_loss, pt_loss
 
     def value_learn(self, trajectories, value_model:BaseModelServer):

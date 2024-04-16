@@ -1,15 +1,12 @@
 import os
+
 import pytest
 import torch
+from transformers import AutoModelForCausalLM
+from typing import Optional
 
-from typing import List, Optional, Tuple
-from transformers import (
-    AutoModelForCausalLM,
-    AdamW,
-    AutoConfig,
-)
+from vllm import LLM, SamplingParams
 from marl.tokenizer.tokenizer_utils import get_tokenizer
-from accelerate import Accelerator
 
 ## CONST VARIABLES
 _TEST_DIR = os.path.dirname(__file__)
@@ -20,11 +17,6 @@ _STR_DTYPE_TO_TORCH_DTYPE = {
     "half": torch.half,
     "bfloat16": torch.bfloat16,
     "float": torch.float,
-}
-
-_STR_OPTIMIZER_TO_TORCH_OPTIMIZER = {
-    "AdamW": AdamW,
-    "SGD": torch.optim.SGD,
 }
 
 
@@ -57,7 +49,7 @@ def configure_dropout(model_config, dropout):
 
 ## FIXTURES
 @pytest.fixture
-def example_prompts() -> List[str]:
+def example_prompts() -> list[str]:
     prompts = []
     for filename in _TEST_PROMPTS:
         prompts += _read_prompts(filename)
@@ -65,98 +57,38 @@ def example_prompts() -> List[str]:
 
 
 @pytest.fixture
-def example_long_prompts() -> List[str]:
+def example_long_prompts() -> list[str]:
     prompts = []
     for filename in _LONG_PROMPTS:
         prompts += _read_prompts(filename)
     return prompts
 
 
-class TorchRunner:
-    def __init__(
-        self,
-        model_name: str,
-        tokenizer_name: Optional[str] = None,
-        dtype: str = "half",
-        optimizer: Optional[str] = None,
-        dropout=0,
-    ) -> None:
-        assert dtype in _STR_DTYPE_TO_TORCH_DTYPE
-        torch_dtype = _STR_DTYPE_TO_TORCH_DTYPE[dtype]
-        model_config = AutoConfig.from_pretrained(model_name)
-        configure_dropout(model_config, dropout)
-        model_config.torch_dtype = (torch_dtype,)
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name, from_tf=False, config=model_config
-        ).cuda()
-        if tokenizer_name is None:
-            tokenizer_name = model_name
-        self.tokenizer = get_tokenizer(tokenizer_name, trust_remote_code=True)
-        if optimizer is not None:
-            assert optimizer in _STR_OPTIMIZER_TO_TORCH_OPTIMIZER
-            torch_optimizer = _STR_OPTIMIZER_TO_TORCH_OPTIMIZER[optimizer]
-            self.optimizer = torch_optimizer(
-                params=self.model.parameters(), lr=2e-1, weight_decay=0.0
-            )
-
-    def train(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        labels: torch.Tensor,
-    ) -> List[Tuple[List[int], str]]:
-        batch = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "labels": labels,
-        }
-        self.model.train()
-        loss = self.model(**batch, use_cache=False).loss
-        loss.backward()
-        self.optimizer.step()
-
-
-@pytest.fixture
-def torch_runner():
-    return TorchRunner
-
-
 class HfRunner:
+
     def __init__(
         self,
         model_name: str,
         tokenizer_name: Optional[str] = None,
         dtype: str = "half",
-        optimizer: Optional[str] = None,
-        dropout=0,
     ) -> None:
-        self.accelerator = Accelerator()
         assert dtype in _STR_DTYPE_TO_TORCH_DTYPE
         torch_dtype = _STR_DTYPE_TO_TORCH_DTYPE[dtype]
-        model_config = AutoConfig.from_pretrained(model_name)
-        configure_dropout(model_config, dropout)
-        model_config.torch_dtype = (torch_dtype,)
         self.model = AutoModelForCausalLM.from_pretrained(
-            model_name, from_tf=False, config=model_config
+            model_name,
+            torch_dtype=torch_dtype,
+            trust_remote_code=True,
         ).cuda()
-        self.model = self.accelerator.prepare(self.model)
         if tokenizer_name is None:
             tokenizer_name = model_name
         self.tokenizer = get_tokenizer(tokenizer_name, trust_remote_code=True)
-        if optimizer is not None:
-            assert optimizer in _STR_OPTIMIZER_TO_TORCH_OPTIMIZER
-            torch_optimizer = _STR_OPTIMIZER_TO_TORCH_OPTIMIZER[optimizer]
-            self.optimizer = torch_optimizer(
-                params=self.model.parameters(), lr=2e-1, weight_decay=0.0
-            )
-            self.optimizer = self.accelerator.prepare(self.optimizer)
 
     def generate(
         self,
-        prompts: List[str],
+        prompts: list[str],
         **kwargs,
-    ) -> List[Tuple[List[int], str]]:
-        outputs: List[Tuple[List[int], str]] = []
+    ) -> list[tuple[list[int], str]]:
+        outputs: list[tuple[list[int], str]] = []
         for prompt in prompts:
             input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids
             output_ids = self.model.generate(
@@ -175,9 +107,9 @@ class HfRunner:
 
     def generate_greedy(
         self,
-        prompts: List[str],
+        prompts: list[str],
         max_tokens: int,
-    ) -> List[Tuple[List[int], str]]:
+    ) -> list[tuple[list[int], str]]:
         outputs = self.generate(prompts, do_sample=False, max_new_tokens=max_tokens)
         for i in range(len(outputs)):
             output_ids, output_str = outputs[i]
@@ -186,10 +118,10 @@ class HfRunner:
 
     def generate_beam_search(
         self,
-        prompts: List[str],
+        prompts: list[str],
         beam_width: int,
         max_tokens: int,
-    ) -> List[Tuple[List[int], str]]:
+    ) -> list[tuple[list[int], str]]:
         outputs = self.generate(
             prompts,
             do_sample=False,
@@ -208,9 +140,9 @@ class HfRunner:
 
     def generate_greedy_logprobs(
         self,
-        prompts: List[str],
+        prompts: list[str],
         max_tokens: int,
-    ) -> List[List[torch.Tensor]]:
+    ) -> list[list[torch.Tensor]]:
         all_logprobs = []
         for prompt in prompts:
             input_ids = self.tokenizer(prompt, return_tensors="pt").input_ids
@@ -238,27 +170,7 @@ class HfRunner:
             all_logprobs.append(seq_logprobs)
         return all_logprobs
 
-    def train(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-        labels: torch.Tensor,
-    ) -> List[Tuple[List[int], str]]:
-        batch = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "labels": labels,
-        }
-        self.model.train()
-        loss = self.model(**batch, use_cache=False).loss
-        self.accelerator.backward(loss)
-        self.optimizer.step()
-
 
 @pytest.fixture
 def hf_runner():
     return HfRunner
-
-@pytest.fixture
-def vllm_runner():
-    return HfRunner  # FIXME

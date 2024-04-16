@@ -13,9 +13,9 @@ import time
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train LLM')
-    parser.add_argument('-C','--config', help='config file name or path.', type=str, default='projects/ppo/internlm2/1B/four_model_4gpu.py')
-    parser.add_argument('-W','--work-dir', help='the dir to save logs and models', type=str, default=None)
-    parser.add_argument('-H','--head', help='ray head address', type=str, default="auto")
+    parser.add_argument('-c','--config', help='config file name or path.', type=str, default='projects/ppo/internlm2/1B/four_model_4gpu.py')
+    parser.add_argument('-w','--work_dir', help='the dir to save logs and models', type=str, default=None)
+    parser.add_argument('-a','--address', help='ray head address', type=str, default="auto")
     args = parser.parse_args()
     return args
 
@@ -34,6 +34,7 @@ if __name__ == "__main__":
     work_dir = args.work_dir
     if work_dir is None:
         work_dir = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(work_dir, exist_ok=True)
 
     logger.add(f"{work_dir}/train.log", filter=lambda record: record["extra"].get("name") == "train")
     logger.add(f"{work_dir}/rollout.log", filter=lambda record: record["extra"].get("name") == "rollout")
@@ -52,7 +53,7 @@ if __name__ == "__main__":
     txt_loader = TxtMessageDataset(**dataset_config)
 
     # init model
-    cluster_address = args.head
+    cluster_address = args.address
     if cluster_address != "auto":
         cluster_address = f"ray://{cluster_address}:10001"
     print(f"cluster_address={cluster_address}")

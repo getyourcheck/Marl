@@ -3,7 +3,10 @@ import torch
 import marl.utils as marl_util
 from transformers import AutoConfig
 from typing import Optional
-from ..model_backend import HfModelRunnerRayActorGroup
+from ..model_backend import (
+    HfModelRunnerRayActorGroup,
+    VllmGeneratorRayActorGroup,
+)
 from ..tokenizer.tokenizer_utils import get_tokenizer
 from ..config_consts import *
 
@@ -28,6 +31,7 @@ class BaseModelServer:
         if self.model_type == MODEL_TYPE_REWARD:
             temp_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
             self.reward_token_id = temp_config.reward_token_id
+            del temp_config
         trainer_config: dict = self.model_config["trainer_config"]  # requisite
         generator_config: dict = self.model_config.get("generator_config")  # optional
         tokenizer_path: str = self.model_config.get("tokenizer_path", model_path)  # opt
@@ -63,7 +67,11 @@ class BaseModelServer:
                         f"{self.model_name}_generator", generator_config
                     )
                 elif self.generator_type == ENGINE_VLLM:
-                    raise NotImplementedError(f"{self.generator_type}.")
+                    self.generator = VllmGeneratorRayActorGroup(
+                        f"{self.model_name}_generator", generator_config
+                    )
+                    # init process group
+                    self.trainer.init_process_group(self.generator)
                 else:
                     raise ValueError(
                         f"No generator is registered with type '{self.generator_type}'."
@@ -150,6 +158,7 @@ class BaseModelServer:
             )
         else:
             raise NotImplementedError(f"unknown inputs: {inputs}")
+
         return self.generator.generate_async(
             input_ids=input_ids, attention_mask=attention_mask, *args, **generate_kwargs
         )
@@ -160,6 +169,11 @@ class BaseModelServer:
     def generate(self, inputs, *args, **generate_kwargs):
         object_refs = self.generate_async(inputs, *args, **generate_kwargs)
         return self.generate_get(object_refs)
+
+    # Sync
+    def sync_model(self, *args, **kwargs):
+        if not self.generator_eq_trainer:
+            self.trainer.broadcast_model_to_generator(self.generator)
 
     # Others
     def set_seed(self, seed: int = None):

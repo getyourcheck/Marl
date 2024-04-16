@@ -29,6 +29,9 @@ from .generate_utils import (
 )
 import marl.utils as marl_util
 from marl.logger import init_logger
+from .dist_utils import init_process_group
+import socket
+import deepspeed
 
 logger = init_logger(__name__)
 DEFAULT_NEW_TOKENS = 64
@@ -59,6 +62,7 @@ class HfModelRunner:
         model_path = self.model_config.get("model_path")
         self.model_type = self.model_config.get("model_type", "").lower()
         torch_dtype = self.model_config.get("torch_dtype", "auto")
+        use_flash_attn = self.model_config.get("use_flash_attn", None)
         if self.model_type == MODEL_TYPE_REWARD:
             # TODO: support reward model from other classes
             self.model: PreTrainedModel = InternLM2ForRewardModel.from_pretrained(
@@ -97,13 +101,16 @@ class HfModelRunner:
         assert parallel["tensor"]["size"] == 1  # TODO: support TP
         assert parallel["pipeline"]["size"] == 1  # TODO: support PP
         self.step = 0
+        self.zero_stage = 1
         if parallel["data"].get("mode") == ENGINE_PLUGIN_FSDP:
             self.accelerator = Accelerator(fsdp_plugin=FullyShardedDataParallelPlugin())
+            self.zero_stage = 3
         elif parallel["data"].get("mode") == ENGINE_PLUGIN_DEEPSPEED:
             from accelerate import DeepSpeedPlugin
 
             ds_config = self.model_config["deepspeed_config"]  # requisite
             self.accelerator = Accelerator(deepspeed_plugin=DeepSpeedPlugin(ds_config))
+            self.zero_stage = ds_config["zero_optimization"]["stage"]
         else:
             self.accelerator = Accelerator()
 
@@ -112,7 +119,6 @@ class HfModelRunner:
             self.device = self.accelerator.device
             logger.info(f"[{self.model_type}] __init__() done without train_kwargs.")
             return
-
         optimizer_type = train_kwargs.get("optimizer", torch.optim.AdamW)
         learning_rate = train_kwargs.get("lr", 1e-5)
         self.clip_grad_norm = train_kwargs.get("clip_grad_norm", 1.0)
@@ -123,7 +129,8 @@ class HfModelRunner:
 
         lr_scheduler_type = train_kwargs.get("lr_scheduler", "linear")
         lr_scheduler_kwargs = train_kwargs.get(
-            "lr_scheduler_kwargs", {"num_warmup_steps": 0, "num_training_steps": 10000000000}
+            "lr_scheduler_kwargs",
+            {"num_warmup_steps": 0, "num_training_steps": 10000000000},
         )
         self.lr_scheduler: _LRScheduler = transformers_get_scheduler(
             lr_scheduler_type,
@@ -138,7 +145,9 @@ class HfModelRunner:
         self.device = self.accelerator.device
         set_seed(self.model_config.get("seed"))
 
-        self.info_rank0(f"[{self.model_type}] __init__() done with optimizer {self.optimizer.optimizer}.")
+        self.info_rank0(
+            f"[{self.model_type}] __init__() done with optimizer {self.optimizer.optimizer}."
+        )
 
     # Training
     def compute_loss_and_backward(
@@ -178,7 +187,9 @@ class HfModelRunner:
 
             loss_sum = 0
             for i in range(len(input_ids)):
-                loss = self.compute_loss(input_ids[i], labels[i], attention_mask[i], criterion[i])
+                loss = self.compute_loss(
+                    input_ids[i], labels[i], attention_mask[i], criterion[i]
+                )
                 loss_sum += loss * loss_weights[i]
                 loss_list[i] = loss
             loss_sum /= gradient_accumulation_steps
@@ -244,7 +255,9 @@ class HfModelRunner:
         self.info_rank0(f"[{self.model_type}] self.parameter_update()")
         self.step += 1
         if self.step % step_interval == 0:
-            self.accelerator.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
+            self.accelerator.clip_grad_norm_(
+                self.model.parameters(), self.clip_grad_norm
+            )
             self.optimizer.step()
             self.lr_scheduler.step()
             self.optimizer.zero_grad()
@@ -259,8 +272,9 @@ class HfModelRunner:
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[Union[list[float], float]] = None,
         step_interval: int = 1,
-        micro_batch_size: Optional[Union[list[int], int]] = None,  # None means using the entire input as one batch
-        debug = False,
+        # None means using the entire input as one batch
+        micro_batch_size: Optional[Union[list[int], int]] = None,
+        debug=False,
         **_ignored,
     ):
         return_list = True
@@ -275,8 +289,10 @@ class HfModelRunner:
             return_list = False
 
         if micro_batch_size is None:
-            for i in range(len(input_ids)):    
-                self.info_rank0(f"[{self.model_type}] train input_ids[{i}] shape[{input_ids[i].shape}]")
+            for i in range(len(input_ids)):
+                self.info_rank0(
+                    f"[{self.model_type}] train input_ids[{i}] shape[{input_ids[i].shape}]"
+                )
             origin_loss = self.compute_loss_and_backward(
                 input_ids, labels, attention_mask, criterion, loss_weights
             )
@@ -298,7 +314,9 @@ class HfModelRunner:
                     loss_weights_mb.append(micro_batch[i]["loss_weights"])
                 if index == 0:
                     for i in range(len(input_ids_mb)):
-                        self.info_rank0(f"[{self.model_type}] will train input_ids_mb[{i}] shape[{input_ids_mb[i].shape}] * {len(micro_batches)} times")
+                        self.info_rank0(
+                            f"[{self.model_type}] will train input_ids_mb[{i}] shape[{input_ids_mb[i].shape}] * {len(micro_batches)} times"
+                        )
                 origin_loss_mb = self.compute_loss_and_backward(
                     input_ids_mb,
                     labels_mb,
@@ -388,8 +406,10 @@ class HfModelRunner:
         if attention_mask is not None:
             attention_mask = attention_mask.to(self.device)
 
-        if micro_batch_size < 0:  # returns entire-input-as-one-batch inference results 
-            self.info_rank0(f"[{self.model_type}] infer() input_ids.shape: {input_ids.shape}")
+        if micro_batch_size < 0:  # returns entire-input-as-one-batch inference results
+            self.info_rank0(
+                f"[{self.model_type}] infer() input_ids.shape: {input_ids.shape}"
+            )
             return self._infer(
                 input_ids,
                 attention_mask,
@@ -409,7 +429,9 @@ class HfModelRunner:
             input_ids_mb = micro_batch["input_ids"]
             attention_mask_mb = micro_batch["attention_mask"]
             if index == 0:
-                self.info_rank0(f"[{self.model_type}] will infer() input_ids_mb.shape: {input_ids_mb.shape} * {len(micro_batches)} times")
+                self.info_rank0(
+                    f"[{self.model_type}] will infer() input_ids_mb.shape: {input_ids_mb.shape} * {len(micro_batches)} times"
+                )
             policy_output_mb = self._infer(
                 input_ids_mb,
                 attention_mask_mb,
@@ -516,7 +538,9 @@ class HfModelRunner:
         debug=False,
         **_ignored,
     ) -> PolicyOutput:
-        self.info_rank0(f"[{self.model_type}] self.generate() kwargs: {generate_kwargs}")
+        self.info_rank0(
+            f"[{self.model_type}] self.generate() kwargs: {generate_kwargs}"
+        )
         if not isinstance(inputs, torch.Tensor):
             input_ids, attention_mask = marl_util.encode(
                 inputs, self.tokenizer, add_generation_prompt=True
@@ -565,8 +589,11 @@ class HfModelRunner:
         return concat_policy_outputs(policy_outputs, padding_token_map)
 
     def get_model(self):
-        _model = self.accelerator.unwrap_model(self.model)
-        return _model
+        return self.accelerator.unwrap_model(self.model)
+
+    def get_state_dict(self):
+        state_dict = self.accelerator.get_state_dict(self.model, unwrap=True)
+        return state_dict
 
     def set_seed(self, seed=None):
         set_seed(seed)
@@ -580,11 +607,11 @@ class HfModelRunner:
                 os.makedirs(path)
             model.save_pretrained(path, from_pt=True)
             logger.info(f"save model to {path}")
-    
-    def info_rank0(self,content):
+
+    def info_rank0(self, content):
         if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
             logger.info(content)
-            
+
 
 import ray
 from ray.util.placement_group import (
@@ -604,7 +631,60 @@ class HfModelRunnerRayActor(HfModelRunner, RayActorMixin):
     extending HfModelRunner with ray related method via RayActorMixin
     """
 
-    pass
+    def init_process_group(self, generator):
+        if self.accelerator.is_main_process:
+            # init process groups for vllm engine
+            master_address = ray._private.services.get_node_ip_address()
+            with socket.socket() as sock:
+                sock.bind(("", 0))
+                master_port = sock.getsockname()[1]
+
+            world_size = generator.dp_size * generator.tp_size + 1
+            refs = [
+                engine.init_process_group.remote(
+                    master_address,
+                    master_port,
+                    i * generator.tp_size + 1,
+                    world_size,
+                    "vllm",
+                )
+                for i, engine in enumerate(generator.ray_actors)
+            ]
+            self._model_update_group = init_process_group(
+                backend="nccl",
+                init_method=f"tcp://{master_address}:{master_port}",
+                world_size=world_size,
+                rank=0,
+                group_name="vllm",
+            )
+            ray.get(refs)
+
+    def broadcast_model_to_generator(self, generator):
+        # TODO: Support Pytorch FSDP.
+        if self.model_config["parallel"]["data"].get("mode") == ENGINE_PLUGIN_FSDP:
+            raise NotImplementedError("FSDP is not supported yet.")
+        logger.info("Broadcast BEGIN")
+        model = self.accelerator.unwrap_model(self.model)
+        for name, param in model.named_parameters():
+            if self.accelerator.is_main_process:
+                shape = param.shape if self.zero_stage != 3 else param.ds_shape
+
+                for engine in generator.ray_actors:
+                    engine.update_weight.remote(name, dtype=param.dtype, shape=shape)
+
+            if self.zero_stage != 3:
+                if self.accelerator.is_main_process:
+                    torch.distributed.broadcast(
+                        param.data, 0, group=self._model_update_group
+                    )
+            else:
+                with deepspeed.zero.GatheredParameters([param]):
+                    if self.accelerator.is_main_process:
+                        torch.distributed.broadcast(
+                            param.data, 0, group=self._model_update_group
+                        )
+
+        logger.info("Broadcast END")
 
 
 class HfModelRunnerRayActorGroup:
@@ -656,41 +736,50 @@ class HfModelRunnerRayActorGroup:
         self.initialize_ref = None
 
     # Training
-    def train_async(self,input_ids, labels, attention_mask, *args, **kwargs):
+    def train_async(self, input_ids, labels, attention_mask, *args, **kwargs):
         if isinstance(input_ids, torch.Tensor):
             micro_batch_size = input_ids.shape[0] // self.dp_size
-            micro_batches = partition_by_micro_batch_size(input_ids, micro_batch_size, attention_mask ,labels)
+            micro_batches = partition_by_micro_batch_size(
+                input_ids, micro_batch_size, attention_mask, labels
+            )
             return [
                 self.ray_actors[index].train.remote(
-                    input_ids=micro_batch["input_ids"], 
-                    attention_mask = micro_batch["attention_mask"], 
-                    labels = micro_batch["labels"], 
-                    *args, **kwargs)
-                for index, micro_batch in enumerate(micro_batches)]
+                    input_ids=micro_batch["input_ids"],
+                    attention_mask=micro_batch["attention_mask"],
+                    labels=micro_batch["labels"],
+                    *args,
+                    **kwargs,
+                )
+                for index, micro_batch in enumerate(micro_batches)
+            ]
         elif isinstance(input_ids, list):
             micro_batch_size = [i for i in range(len(input_ids))]
             for index, input_id in enumerate(input_ids):
                 micro_batch_size[index] = input_id[index].shape[0] // self.dp_size
 
-            micro_batches = partition_list_by_micro_batch_size(input_ids, self.dp_size, attention_mask ,labels)
+            micro_batches = partition_list_by_micro_batch_size(
+                input_ids, self.dp_size, attention_mask, labels
+            )
             object_refs = []
             for index, micro_batch in enumerate(micro_batches):
-                input_ids_mb=[]
-                attention_mask_mb=[]
-                labels_mb=[]
-                loss_weights_mb=[]
+                input_ids_mb = []
+                attention_mask_mb = []
+                labels_mb = []
+                loss_weights_mb = []
                 for i in range(len(micro_batch)):
                     input_ids_mb.append(micro_batch[i]["input_ids"])
                     attention_mask_mb.append(micro_batch[i]["attention_mask"])
                     labels_mb.append(micro_batch[i]["labels"])
                     loss_weights_mb.append(micro_batch[i]["loss_weights"])
             object_ref = self.ray_actors[index].train.remote(
-                    inputs=input_ids_mb, 
-                    attention_mask = attention_mask_mb, 
-                    labels = labels_mb, 
-                    loss_weights = loss_weights_mb,
-                    *args, **kwargs)
-            object_refs.append(object_ref)    
+                inputs=input_ids_mb,
+                attention_mask=attention_mask_mb,
+                labels=labels_mb,
+                loss_weights=loss_weights_mb,
+                *args,
+                **kwargs,
+            )
+            object_refs.append(object_ref)
             return object_ref
 
     def train_get(self, object_refs, timeout=None):
@@ -704,10 +793,18 @@ class HfModelRunnerRayActorGroup:
     # Inference
     def infer_async(self, input_ids, attention_mask, *args, **kwargs):
         micro_batch_size = input_ids.shape[0] // self.dp_size
-        micro_batches = partition_by_micro_batch_size(input_ids, micro_batch_size, attention_mask)
-        return [self.ray_actors[index].infer.remote(inputs=micro_batch["input_ids"], attention_mask =micro_batch["attention_mask"], *args, **kwargs) 
-                for index, micro_batch in enumerate(micro_batches)]
-
+        micro_batches = partition_by_micro_batch_size(
+            input_ids, micro_batch_size, attention_mask
+        )
+        return [
+            self.ray_actors[index].infer.remote(
+                inputs=micro_batch["input_ids"],
+                attention_mask=micro_batch["attention_mask"],
+                *args,
+                **kwargs,
+            )
+            for index, micro_batch in enumerate(micro_batches)
+        ]
 
     def infer_get(self, object_refs, timeout=None):
         outputs = ray.get(object_refs, timeout=timeout)
@@ -720,16 +817,23 @@ class HfModelRunnerRayActorGroup:
     # Generation
     def generate_async(self, input_ids, attention_mask, *args, **kwargs):
         micro_batch_size = input_ids.shape[0] // self.dp_size
-        micro_batches = partition_by_micro_batch_size(input_ids, micro_batch_size, attention_mask)
-        return [self.ray_actors[index].generate.remote(inputs=micro_batch["input_ids"], attention_mask =micro_batch["attention_mask"], *args, **kwargs) 
-                for index, micro_batch in enumerate(micro_batches)]
-
+        micro_batches = partition_by_micro_batch_size(
+            input_ids, micro_batch_size, attention_mask
+        )
+        return [
+            self.ray_actors[index].generate.remote(
+                inputs=micro_batch["input_ids"],
+                attention_mask=micro_batch["attention_mask"],
+                *args,
+                **kwargs,
+            )
+            for index, micro_batch in enumerate(micro_batches)
+        ]
 
     def generate_get(self, object_refs, timeout=None):
         outputs = ray.get(object_refs, timeout=timeout)
-        padding_token_map={"output_ids":self.tokenizer_pad_token_id}
-        return concat_policy_outputs(outputs,padding_token_map)
-
+        padding_token_map = {"output_ids": self.tokenizer_pad_token_id}
+        return concat_policy_outputs(outputs, padding_token_map)
 
     def generate(self, *args, **kwargs):
         object_refs = self.generate_async(*args, **kwargs)
@@ -738,6 +842,9 @@ class HfModelRunnerRayActorGroup:
     # Others
     def get_model(self):
         return self.ray_actors[0].get_model.remote()
+
+    def get_state_dict(self):
+        return self.ray_actors[0].get_state_dict.remote()
 
     def set_seed(self, seed=None):
         ray.get([actor.set_seed.remote(seed) for actor in self.ray_actors])
@@ -759,3 +866,17 @@ class HfModelRunnerRayActorGroup:
 
     def save_model(self, path):
         ray.get(self.ray_actors[0].save_model.remote(path))
+
+    def init_process_group(self, generator):
+        refs = [
+            hfm.init_process_group.remote(generator)
+            for i, hfm in enumerate(self.ray_actors)
+        ]
+        ray.get(refs)
+
+    def broadcast_model_to_generator(self, generator: None):
+        refs = [
+            hfm.broadcast_model_to_generator.remote(generator)
+            for i, hfm in enumerate(self.ray_actors)
+        ]
+        ray.get(refs)

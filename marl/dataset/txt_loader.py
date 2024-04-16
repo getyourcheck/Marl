@@ -169,7 +169,7 @@ class TxtMessageDataset(IterableDataset):
         if token_ids.shape[-1] > self.max_seq_len:
             # TODO truncation
             # raise RuntimeError(f"token_ids is too long: {token_ids.shape[-1]}")
-            print(f"[TXT Loader] Warning, {mes_type} message {message} is too long, skipped...")
+            # print(f"[TXT Loader] Warning, {mes_type} message {message} is too long, skipped...")
             return None
         return Message(message=message,
                        token_ids=token_ids,

@@ -1,0 +1,13 @@
+ninja  # For faster builds.
+psutil
+sentencepiece  # Required for LLaMA tokenizer.
+numpy
+fastapi
+uvicorn[standard]
+aioprometheus[starlette]
+pydantic>=2.0  # Required for OpenAI server.
+prometheus_client>=0.18.0
+pynvml==11.5.0
+outlines
+cupy-cuda11x
+vllm==0.3.2  # source /cpfs01/shared/public/rl3m_env/env/llm-opus-20240325

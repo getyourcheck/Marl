@@ -743,10 +743,13 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
     # Training
     def train_async(self, input_ids, labels, attention_mask, *args, **kwargs):
         if isinstance(input_ids, torch.Tensor):
-            micro_batch_size = input_ids.shape[0] // self.dp_size
+            micro_batch_size = input_ids.shape[0] // self.dp_size + (
+                input_ids.shape[0] % self.dp_size > 0
+            )  # round up division, i.e., math.ceil(a / b)
             micro_batches = partition_by_micro_batch_size(
                 input_ids, micro_batch_size, attention_mask, labels
             )
+            assert len(micro_batches) == self.dp_size
             return [
                 self.ray_actors[index].train.remote(
                     input_ids=micro_batch["input_ids"],
@@ -758,10 +761,13 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
                 for index, micro_batch in enumerate(micro_batches)
             ]
         elif isinstance(input_ids, list):
+            """a list of tensors whose training loss will be taken average"""
+            assert isinstance(input_ids[0], torch.Tensor)
             micro_batch_size = [i for i in range(len(input_ids))]
             for index, input_id in enumerate(input_ids):
-                micro_batch_size[index] = input_id[index].shape[0] // self.dp_size
-
+                micro_batch_size[index] = input_id[index].shape[0] // self.dp_size + (
+                    input_id[index].shape[0] % self.dp_size > 0
+                )  # round up division, i.e., math.ceil(a / b)
             micro_batches = partition_list_by_micro_batch_size(
                 input_ids, self.dp_size, attention_mask, labels
             )
@@ -771,11 +777,13 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
                 attention_mask_mb = []
                 labels_mb = []
                 loss_weights_mb = []
+                assert len(micro_batch) == self.dp_size
                 for i in range(len(micro_batch)):
                     input_ids_mb.append(micro_batch[i]["input_ids"])
                     attention_mask_mb.append(micro_batch[i]["attention_mask"])
                     labels_mb.append(micro_batch[i]["labels"])
                     loss_weights_mb.append(micro_batch[i]["loss_weights"])
+
             object_ref = self.ray_actors[index].train.remote(
                 inputs=input_ids_mb,
                 attention_mask=attention_mask_mb,
@@ -797,10 +805,13 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
 
     # Inference
     def infer_async(self, input_ids, attention_mask, *args, **kwargs):
-        micro_batch_size = input_ids.shape[0] // self.dp_size
+        micro_batch_size = input_ids.shape[0] // self.dp_size + (
+            input_ids.shape[0] % self.dp_size > 0
+        )  # round up division, i.e., math.ceil(a / b)
         micro_batches = partition_by_micro_batch_size(
             input_ids, micro_batch_size, attention_mask
         )
+        assert len(micro_batches) == self.dp_size
         return [
             self.ray_actors[index].infer.remote(
                 inputs=micro_batch["input_ids"],
@@ -821,10 +832,13 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
 
     # Generation
     def generate_async(self, input_ids, attention_mask, *args, **kwargs):
-        micro_batch_size = input_ids.shape[0] // self.dp_size
+        micro_batch_size = input_ids.shape[0] // self.dp_size + (
+            input_ids.shape[0] % self.dp_size > 0
+        )  # round up division, i.e., math.ceil(a / b)
         micro_batches = partition_by_micro_batch_size(
             input_ids, micro_batch_size, attention_mask
         )
+        assert len(micro_batches) == self.dp_size
         return [
             self.ray_actors[index].generate.remote(
                 inputs=micro_batch["input_ids"],

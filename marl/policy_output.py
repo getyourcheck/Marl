@@ -56,59 +56,95 @@ class PolicyOutput(ModelOutput):
         return keys
 
 
+def union_keys_from_policy_outputs(policy_outputs: list[PolicyOutput]) -> list:
+    all_keys = set()
+    for po in policy_outputs:
+        all_keys = all_keys.union(set(po.keys()))
+    return list(all_keys)  # e.g., return ["output_str", "output_ids", "loss", ...]
+
+
+def union_tensor_keys_from_policy_outputs(policy_outputs: list[PolicyOutput]) -> list:
+    all_keys = set()
+    for po in policy_outputs:
+        all_keys = all_keys.union(set(po.get_tensor_keys()))
+    return list(all_keys)  # e.g., return ["output_ids", "loss", ...]
+
+
 def concat_policy_outputs(
-    inputs: list[PolicyOutput], padding_token_map: dict = None
+    policy_outputs: list[PolicyOutput], padding_token_map: dict = None
 ) -> PolicyOutput:
-    if inputs == None or len(inputs) == 0:
+    if isinstance(policy_outputs, PolicyOutput):
+        return policy_outputs  # Wrong input type
+    elif policy_outputs == None or len(policy_outputs) == 0:
         return PolicyOutput(None)
-    elif len(inputs) == 1:
-        return inputs[0]
-    if padding_token_map is not None:
-        padding_policy_outputs(inputs, padding_token_map)
+    elif len(policy_outputs) == 1:
+        return policy_outputs[0]
+
+    if padding_token_map is not None:  # padding 
+        policy_outputs = padding_policy_outputs(policy_outputs, padding_token_map)
 
     concated = PolicyOutput()
-    for key, value in inputs[0].items():
+    all_keys = union_keys_from_policy_outputs(policy_outputs)
+    for key in all_keys:
+        for po in policy_outputs:
+            value = po[key]
+            if value is not None:
+                break  # get the first non-empty value
         if value is None:
-            continue
-        elif isinstance(value, torch.Tensor):
-            concated[key] = torch.cat([po[key] for po in inputs], dim=0)
-        elif isinstance(value, list):
+            continue  # skip if all values are None
+
+        if isinstance(value, torch.Tensor):
+            concated[key] = torch.cat(
+                [po[key] for po in policy_outputs if po[key] is not None], dim=0
+            )
+        elif isinstance(value, list):  # e.g., list[str]
             concated[key] = []
-            for po in inputs:
-                concated[key].extend(po[key])
+            for po in policy_outputs:
+                if po[key] is not None:
+                    concated[key].extend(po[key])
         elif isinstance(value, tuple) and isinstance(value[0], torch.Tensor):
-            value = [i for i in range(len(value))]
+            results = []
             for i in range(len(value)):
-                value[i] = torch.cat([po[key][i] for po in inputs], dim=0)
-            concated[key] = value
+                beef = [po[key][i] for po in policy_outputs if po[key][i] is not None]
+                tensor = torch.cat(beef, dim=0) if len(beef) > 0 else torch.Tensor()
+                results.append(tensor)
+            concated[key] = tuple(results)
+            raise NotImplementedError(f"{value}\n{[v.shape for v in value]}\n{results}")
         else:
             raise TypeError(f"value: {value} with unsupported type: {type(value)}.")
     return concated
 
 
-def padding_policy_outputs(inputs: list[PolicyOutput], padding_token_map={}):
-    keys = inputs[0].get_tensor_keys()
-    for key in keys:
-        max_shape = find_max_shape(inputs, key)
-        if key not in padding_token_map:
-            padding_token_map[key] = 0
-        for input in inputs:
-            old_value = input[key]
-            pad = [max_shape[i] - old_value.shape[i] for i in range(len(max_shape))]
-            new_value = torch.nn.functional.pad(
-                old_value, pad, mode="constant", value=padding_token_map[key]
-            )
-            input[key] = new_value
+def padding_policy_outputs(policy_outputs: list[PolicyOutput], padding_token_map={}):
+    DEFAULT_PADDING_ID = 0
+    RIGHT_PADDING = True
+    tensor_keys = union_tensor_keys_from_policy_outputs(policy_outputs)
+    # logger.debug(tensor_keys)
+    for key in tensor_keys:
+        padding_id = padding_token_map.get(key, DEFAULT_PADDING_ID)
+        max_seq_len = find_max_seq_len(policy_outputs, key)
+        # logger.debug(f"key: {key}. max_seq_len: {max_seq_len}")
+        for policy_output in policy_outputs:
+            origin_tensor = policy_output[key]
+            padding_size = max_seq_len - origin_tensor.shape[1]
+            pad = (0, padding_size) if RIGHT_PADDING else (padding_size, 0)
+            # logger.debug(f"origin_tensor.shape: {origin_tensor.shape}. pad: {pad}")
+            padded_tensor = torch.nn.functional.pad(
+                origin_tensor, pad, mode="constant", value=padding_id
+            )  # padding starts from the last dimension and moves forward
+            policy_output[key] = padded_tensor
+            # logger.debug(f"padded_tensor.shape: {padded_tensor.shape}\n{padded_tensor}")
+    return policy_outputs
 
 
-def find_max_shape(inputs: list[PolicyOutput], key):
-    max_shape = torch.Tensor([]).shape
-    for input in inputs:
-        if input[key] == None:
+def find_max_seq_len(policy_outputs: list[PolicyOutput], key):
+    max_seq_len = 0
+    for policy_output in policy_outputs:
+        if policy_output[key] == None:
             continue
-        elif input[key].shape > max_shape:
-            max_shape = input[key].shape
-    return max_shape
+        batch_size, seq_len = policy_output[key].shape  # assert: only support 2d tensor
+        max_seq_len = seq_len if seq_len > max_seq_len else max_seq_len
+    return max_seq_len
 
 
 def logprobs_from_logits(
@@ -130,3 +166,6 @@ def logprobs_from_logits(
         return logp
     logpy = torch.gather(logp, -1, labels.unsqueeze(2)).squeeze(-1)
     return logpy.cuda()
+
+
+# def logprobs_ # TODO

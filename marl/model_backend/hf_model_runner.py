@@ -620,6 +620,7 @@ from ray.util.placement_group import (
 )
 from .ray_utils import create_ray_actors
 from .ray_actor_mixin import RayActorMixin
+from .ray_actor_group import RayActorGroup
 from .ray_utils import DEFAULT_NUM_CPUS, DEFAULT_NUM_GPUS
 from ..config_utils import get_gpu_requirement, get_dp_size
 from ..policy_output import concat_policy_outputs
@@ -691,7 +692,7 @@ class HfModelRunnerRayActor(HfModelRunner, RayActorMixin):
         logger.info("Broadcast END")
 
 
-class HfModelRunnerRayActorGroup:
+class HfModelRunnerRayActorGroup(RayActorGroup):
     """
     HfModelRunnerRayActorGroup manages a list of HfModelRunnerRayActor
     create ray actors

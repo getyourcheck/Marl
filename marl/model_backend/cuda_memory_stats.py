@@ -1,5 +1,6 @@
-GB_SHIFT=30
-MB_SHIFT=20
+GB_SHIFT = 30
+MB_SHIFT = 20
+
 
 class CudaMemoryStats(dict):
     # see: https://pytorch.org/docs/stable/generated/torch.cuda.memory_stats.html
@@ -11,10 +12,10 @@ class CudaMemoryStats(dict):
     @property
     def num_gpus(self):
         return len(self.keys())
-    
+
     @property
     def total_current_bytes(self):
-        CURRENT_BYTE_KEY="allocated_bytes.all.current"
+        CURRENT_BYTE_KEY = "allocated_bytes.all.current"
         total = 0
         for _, v in self.items():
             total += v.get(CURRENT_BYTE_KEY, 0)
@@ -23,7 +24,7 @@ class CudaMemoryStats(dict):
     @property
     def total_current_gb(self):
         return self.total_current_bytes >> GB_SHIFT
-    
+
     @property
     def total_current_mb(self):
         return self.total_current_bytes >> MB_SHIFT
@@ -33,7 +34,7 @@ class CudaMemoryStats(dict):
         return self.total_current_bytes / self.num_gpus if self.num_gpus != 0 else 0
 
 
-def merge_cuda_memory_stats_list(dict_list: list[CudaMemoryStats]):
+def merge_cuda_memory_stats_list(dict_list: list[CudaMemoryStats]) -> CudaMemoryStats:
     if isinstance(dict_list, CudaMemoryStats):
         print("WARNING: dict_list is a CudaMemoryStatus instead of a list")
         return dict_list
@@ -43,3 +44,4 @@ def merge_cuda_memory_stats_list(dict_list: list[CudaMemoryStats]):
         for m in dict_list[1:]:
             memory_stats_dict.update(m)
     return memory_stats_dict
+

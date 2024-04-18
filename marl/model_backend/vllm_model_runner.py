@@ -156,6 +156,7 @@ from ray.util.placement_group import (
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from .ray_utils import create_ray_actors
 from .ray_actor_mixin import RayActorMixin
+from .ray_actor_group import RayActorGroup
 from .ray_utils import DEFAULT_NUM_CPUS, DEFAULT_NUM_GPUS
 from ..config_utils import get_gpu_requirement, get_tp_size, get_dp_size
 from ..policy_output import concat_policy_outputs
@@ -183,14 +184,14 @@ class VllmGeneratorRayActor(VllmGenerator, RayActorMixin):
         )
 
 
-class VllmGeneratorRayActorGroup:
+class VllmGeneratorRayActorGroup(RayActorGroup):
     def __init__(self, name: str, config: dict):
         self.released = True
         self.config = config
         self.tp_size = get_tp_size(config)  # tensor parallelism
         self.dp_size = get_dp_size(config)  # num of vllm_engines
         # assert dp_size == 1  # TODO: multiple vllm engines
-        assert self.tp_size == 1  # TODO: tp
+        # assert self.tp_size == 1  # TODO: tp
         self.tokenizer_pad_token_id = config.get("tokenizer_pad_token_id", 0)
 
         self.ray_actors: list[VllmGeneratorRayActor] = []  # i.e., vllm_engines

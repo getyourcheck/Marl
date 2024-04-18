@@ -22,6 +22,7 @@ class BaseModelServer:
         self.tokenizer = None
         self.model_ref = None
         self.is_initialized = False
+        self.show_cuda_mem_stats = self.model_config.get("show_cuda_mem_stats", True)
         print(
             f"[{self.__class__.__name__}] model_name={model_name}, model_config={model_config}"
         )
@@ -128,7 +129,16 @@ class BaseModelServer:
         object_refs = self.train_async(
             input_ids, labels, attention_mask, *args, **train_kwargs
         )
-        return self.train_get(object_refs)
+        loss = self.train_get(object_refs)
+        if self.show_cuda_mem_stats:
+            trainer_mem = self.trainer.get_cuda_mem_stats()
+            generator_mem = self.generator.get_cuda_mem_stats()
+            print(
+                f"[{self.__class__.__name__}] {self.model_name} trainer allocated GPU memory: {trainer_mem.total_current_mb} MiB."
+                f"\n[{self.__class__.__name__}] {self.model_name} generator allocated GPU memory: {generator_mem.total_current_mb} MiB."
+                f"\n[{self.__class__.__name__}] {self.model_name} generator_eq_trainer: {self.generator_eq_trainer}"
+            )
+        return loss
 
     # Inference
     def infer_async(self, inputs, attention_mask=None, *args, **infer_kwargs):
@@ -171,7 +181,16 @@ class BaseModelServer:
 
     def generate(self, inputs, *args, **generate_kwargs):
         object_refs = self.generate_async(inputs, *args, **generate_kwargs)
-        return self.generate_get(object_refs)
+        policy_output = self.generate_get(object_refs)
+        if self.show_cuda_mem_stats:
+            trainer_mem = self.trainer.get_cuda_mem_stats()
+            generator_mem = self.generator.get_cuda_mem_stats()
+            print(
+                f"[{self.__class__.__name__}] {self.model_name} trainer allocated GPU memory: {trainer_mem.total_current_mb} MiB."
+                f"\n[{self.__class__.__name__}] {self.model_name} generator allocated GPU memory: {generator_mem.total_current_mb} MiB."
+                f"\n[{self.__class__.__name__}] {self.model_name} generator_eq_trainer: {self.generator_eq_trainer}"
+            )
+        return policy_output
 
     # Sync
     def sync_model(self, *args, **kwargs):

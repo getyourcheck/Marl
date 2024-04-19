@@ -13,5 +13,6 @@ ENGINE_VLLM = "vllm"
 ENGINE_LMDEPLOY = "lmdeploy"
 
 # plugins for trainer engine (e.g., huggingface accelerate)
+ENGINE_PLUGIN_DDP = "ddp"
 ENGINE_PLUGIN_FSDP = "fsdp"
 ENGINE_PLUGIN_DEEPSPEED = "deepspeed"

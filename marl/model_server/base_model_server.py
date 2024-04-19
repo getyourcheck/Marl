@@ -114,6 +114,9 @@ class BaseModelServer:
             self.model_ref = self.trainer.get_model()  # an reference
         return ray.get(self.model_ref, timeout=600.0)  # 10min timeout
 
+    def state_dict_get(self):
+        return ray.get(self.trainer.get_state_dict(), timeout=600.0)  # 10min timeout
+
     # Training
     def train_async(
         self, input_ids, labels=None, attention_mask=None, *args, **train_kwargs

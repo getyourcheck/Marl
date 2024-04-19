@@ -37,6 +37,7 @@ actor = dict(
                 "sub_group_size": 1,  # default: 1e12
                 "zero_quantized_gradients": True,  # default: False
                 "zero_quantized_weights": True,  # default: False
+                "stage3_gather_16bit_weights_on_model_save":True,
             },
             "gradient_accumulation_steps": 1,
             "train_micro_batch_size_per_gpu": 1,

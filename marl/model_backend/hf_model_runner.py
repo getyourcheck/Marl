@@ -589,26 +589,39 @@ class HfModelRunner:
         return concat_policy_outputs(policy_outputs, padding_token_map)
 
     def get_model(self):
-        return self.accelerator.unwrap_model(self.model)
+        parallel: dict = self.model_config["parallel"]
+        dp = parallel["data"].get("size")
+        dp_mode = parallel["data"].get("mode")
+        if dp > 1 and dp_mode != ENGINE_PLUGIN_DDP:
+            raise("please use get_state_dict instead when using parallel")
+        _model = self.accelerator.unwrap_model(self.model)
+        return _model
 
     def get_state_dict(self):
-        state_dict = self.accelerator.get_state_dict(self.model, unwrap=True)
+        state_dict=self.accelerator.get_state_dict(self.model)
+        if not self.accelerator.is_main_process:
+            return None
         return state_dict
 
     def set_seed(self, seed=None):
         set_seed(seed)
 
     def save_model(self, path):
-        if torch.distributed.get_rank() == 0:
-            model = self.model
-            if isinstance(self.model, torch.nn.parallel.DistributedDataParallel):
-                model = self.accelerator.unwrap_model(self.model)
-            if not os.path.exists(path):
-                os.makedirs(path)
-            model.save_pretrained(path, from_pt=True)
-            logger.info(f"save model to {path}")
-
-    def info_rank0(self, content):
+        if not self.accelerator.is_main_process:
+            self.accelerator.get_state_dict(self.model)
+            return
+        unwrapped_model = self.accelerator.unwrap_model(self.model)
+        if not os.path.exists(path):
+            os.makedirs(path)
+        unwrapped_model.save_pretrained(
+            path,
+            is_main_process=True,
+            save_function=self.accelerator.save,
+            state_dict=self.accelerator.get_state_dict(self.model),
+        )
+        logger.info(f"save model to {path}")
+    
+    def info_rank0(self,content):
         if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
             logger.info(content)
 
@@ -699,6 +712,7 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
     """
 
     def __init__(self, name: str, config: dict):
+        super().__init__(name,config)
         self.released = True
         num_gpus = get_gpu_requirement(config)
         self.dp_size = get_dp_size(config)
@@ -863,7 +877,9 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
         return self.ray_actors[0].get_model.remote()
 
     def get_state_dict(self):
-        return self.ray_actors[0].get_state_dict.remote()
+        state_dicts=[actor.get_state_dict.remote() for actor in self.ray_actors]
+        return state_dicts[0]
+        
 
     def set_seed(self, seed=None):
         ray.get([actor.set_seed.remote(seed) for actor in self.ray_actors])
@@ -884,7 +900,7 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
         self.released = True
 
     def save_model(self, path):
-        ray.get(self.ray_actors[0].save_model.remote(path))
+        ray.get([actor.save_model.remote(path) for actor in self.ray_actors]) 
 
     def init_process_group(self, generator):
         refs = [

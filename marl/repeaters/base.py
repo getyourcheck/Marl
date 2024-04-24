@@ -142,7 +142,7 @@ class BaseRepeater(object):
             micro_batch_size=self.critic_micro_bs,
         )
         print(f"[critic infer] duration: {round(time.time() - s_t, 2)} s")
-        values_with_last_value = value_output.logits.cpu() * trajectories.answer_mask.cpu()
+        values_with_last_value = value_output.logits.to(torch.float32).cpu()
         return values_with_last_value
 
     def _get_advantages_and_returns(self, trajectories):

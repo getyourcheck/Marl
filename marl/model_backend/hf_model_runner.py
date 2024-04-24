@@ -86,8 +86,8 @@ class HfModelRunner:
             )
 
         # Graident checkpointing
-        if self.model_config.get("gradient_checkpointing", False):
-            self.info_rank0(f"[{self.model_type}]: Enable gradient_checkpointing")
+        gradient_checkpointing = self.model_config.get("gradient_checkpointing", False)
+        if gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
         self.vocab_size = self.model.config.vocab_size
 
@@ -106,6 +106,7 @@ class HfModelRunner:
         assert parallel["pipeline"]["size"] == 1  # TODO: support PP
         self.step = 0
         self.zero_stage = 1
+        mixed_precision = self.model_config.get("mixed_precision", None)
         if parallel["data"].get("mode") == ENGINE_PLUGIN_FSDP:
             self.accelerator = Accelerator(fsdp_plugin=FullyShardedDataParallelPlugin())
             self.zero_stage = 3
@@ -116,9 +117,6 @@ class HfModelRunner:
             self.accelerator = Accelerator(deepspeed_plugin=DeepSpeedPlugin(ds_config))
             self.zero_stage = ds_config["zero_optimization"]["stage"]
         else:
-            mixed_precision = self.model_config.get("mixed_precision", None)
-            if mixed_precision is not None:
-                self.info_rank0(f"[{self.model_type}]: Enable mixed_precision = {mixed_precision}")
             self.accelerator = Accelerator(mixed_precision=mixed_precision)
             self.zero_stage = 0
 
@@ -152,7 +150,10 @@ class HfModelRunner:
         # Others
         self.device = self.accelerator.device
         set_seed(self.model_config.get("seed"))
-
+        if mixed_precision is not None:
+            self.info_rank0(f"[{self.model_type}]: Enable mixed_precision = {mixed_precision}")
+        if gradient_checkpointing:
+            self.info_rank0(f"[{self.model_type}]: Enable gradient_checkpointing")
         self.info_rank0(
             f"[{self.model_type}] __init__() done with optimizer {self.optimizer.optimizer}."
         )

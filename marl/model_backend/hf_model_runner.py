@@ -85,6 +85,11 @@ class HfModelRunner:
                 torch_dtype=torch_dtype,
                 trust_remote_code=True,
             )
+
+        # Graident checkpointing
+        if self.model_config.get("gradient_checkpointing", False):
+            self.info_rank0(f"[{self.model_type}]: Enable gradient_checkpointing")
+            self.model.gradient_checkpointing_enable()
         self.vocab_size = self.model.config.vocab_size
 
         # 2. Tokenizer
@@ -112,7 +117,11 @@ class HfModelRunner:
             self.accelerator = Accelerator(deepspeed_plugin=DeepSpeedPlugin(ds_config))
             self.zero_stage = ds_config["zero_optimization"]["stage"]
         else:
-            self.accelerator = Accelerator()
+            mixed_precision = self.model_config.get("mixed_precision", None)
+            if mixed_precision is not None:
+                self.info_rank0(f"[{self.model_type}]: Enable mixed_precision = {mixed_precision}")
+            self.accelerator = Accelerator(mixed_precision=mixed_precision)
+            self.zero_stage = 0
 
         train_kwargs = self.model_config.get("train_kwargs")
         if train_kwargs is None:  # requires no training
@@ -187,9 +196,8 @@ class HfModelRunner:
 
             loss_sum = 0
             for i in range(len(input_ids)):
-                loss = self.compute_loss(
-                    input_ids[i], labels[i], attention_mask[i], criterion[i]
-                )
+                with self.accelerator.autocast():
+                    loss = self.compute_loss(input_ids[i], labels[i], attention_mask[i], criterion[i])
                 loss_sum += loss * loss_weights[i]
                 loss_list[i] = loss
             loss_sum /= gradient_accumulation_steps

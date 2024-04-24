@@ -2,12 +2,9 @@ import ray
 import torch
 from transformers import AutoConfig
 from typing import Optional
+from marl.model_backend.hf_model_runner import HfModelRunnerRayActorGroup
 
 from ..config_consts import *
-from ..model_backend import (
-    HfModelRunnerRayActorGroup,
-    VllmGeneratorRayActorGroup,
-)
 from ..tokenizer import tokenizer_utils
 from ..utils import expand_reward_token_id
 
@@ -71,6 +68,7 @@ class BaseModelServer:
                         f"{self.model_name}_generator", generator_config
                     )
                 elif self.generator_type == ENGINE_VLLM:
+                    from marl.model_backend.vllm_model_runner import VllmGeneratorRayActorGroup
                     self.generator = VllmGeneratorRayActorGroup(
                         f"{self.model_name}_generator", generator_config
                     )

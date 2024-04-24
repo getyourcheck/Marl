@@ -23,23 +23,27 @@ class VllmGenerator:
         parallel: dict = self.model_config.get("parallel")
         tensor_parallel_size = 1 if parallel is None else parallel["tensor"]["size"]
 
-        # NOTE: In 0.2.7, vLLM made a major change to its architecture which move one worker into the driver process.
-        # Driver process will manually set CUDA_VISIBLE_DEVICES before worker init. To avoid importing torch before
-        # set CUDA_VISIBLE_DEVICES, we must defer monkey patch.
-        # For more detail, see: https://github.com/vllm-project/vllm/pull/2221
         import vllm
-        from vllm.worker import worker
-        from marl.model_backend.vllm_worker_wrap import VllmWorkerWrap
 
-        def _set_cuda_visible_devices(device_ids: list[int]):
-            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, device_ids))
+        if "0.2.7" <= vllm.__version__ <= "0.3.3" and tensor_parallel_size != 1:
+            # NOTE: In 0.2.7, vLLM made a major change to its architecture which move one worker into the driver process.
+            # Driver process will manually set CUDA_VISIBLE_DEVICES before worker init. To avoid importing torch before
+            # set CUDA_VISIBLE_DEVICES, we must defer monkey patch.
+            # For more detail, see: https://github.com/vllm-project/vllm/pull/2221
+            def _set_cuda_visible_devices(device_ids: list[int]):
+                os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, device_ids))
+                from vllm.worker import worker
+                from marl.model_backend.vllm_worker_wrap import VllmWorkerWrap
+
+                worker.Worker = VllmWorkerWrap
+
+            vllm.engine.llm_engine.set_cuda_visible_devices = _set_cuda_visible_devices
+        else:
             from vllm.worker import worker
             from marl.model_backend.vllm_worker_wrap import VllmWorkerWrap
 
             worker.Worker = VllmWorkerWrap
-
-        vllm.engine.llm_engine.set_cuda_visible_devices = _set_cuda_visible_devices
-        worker.Worker = VllmWorkerWrap
+        
         self.llm: LLM = vllm.LLM(
             model=model_path,
             tokenizer=tokenizer_path,
@@ -163,9 +167,6 @@ from ..policy_output import concat_policy_outputs
 
 
 class VllmGeneratorRayActor(VllmGenerator, RayActorMixin):
-    def __init__(self, model_config) -> None:
-        self.model_config: dict = model_config
-
     def init_process_group(
         self, master_address, master_port, rank_offset, world_size, group_name
     ):
@@ -190,24 +191,25 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
         self.config = config
         self.tp_size = get_tp_size(config)  # tensor parallelism
         self.dp_size = get_dp_size(config)  # num of vllm_engines
-        # assert dp_size == 1  # TODO: multiple vllm engines
-        # assert self.tp_size == 1  # TODO: tp
         self.tokenizer_pad_token_id = config.get("tokenizer_pad_token_id", 0)
 
         self.ray_actors: list[VllmGeneratorRayActor] = []  # i.e., vllm_engines
         for dp_i in range(self.dp_size):
             ray_actor_num_gpus = int(self.tp_size == 1)
+            scheduling_strategy = None
 
-            bundles = [
-                {"CPU": DEFAULT_NUM_CPUS, "GPU": DEFAULT_NUM_GPUS}
-            ] * self.tp_size
-            self.placement_group = create_placement_group(bundles)
+            if self.tp_size > 1:
+                bundles = [
+                    {"CPU": DEFAULT_NUM_CPUS, "GPU": DEFAULT_NUM_GPUS}
+                ] * self.tp_size
+                self.placement_group = create_placement_group(bundles)
+                ray.get(self.placement_group.ready())
 
-            scheduling_strategy = PlacementGroupSchedulingStrategy(
-                placement_group=self.placement_group,
-                placement_group_capture_child_tasks=True,
-                placement_group_bundle_index=0,
-            )
+                scheduling_strategy = PlacementGroupSchedulingStrategy(
+                    placement_group=self.placement_group,
+                    placement_group_capture_child_tasks=True,
+                    placement_group_bundle_index=0,
+                )
 
             self.ray_actors.append(
                 ray.remote(VllmGeneratorRayActor)

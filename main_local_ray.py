@@ -1,16 +1,17 @@
-from marl.dataset.txt_loader import TxtMessageDataset
-from marl.tokenizer.tokenizer_utils import get_tokenizer
-from marl.envs.txt_env import TxtEnv
-from marl.repeaters.base import BaseRepeater
-from marl.trainer.ppo import PPOTrainer
-from marl.coordinator import Coordinator
-from marl.config import Config
-import numpy as np
-from loguru import logger
 import argparse
 import os
 import time
 
+from loguru import logger
+import numpy as np
+
+from marl.config import Config
+from marl.coordinator import Coordinator
+from marl.dataset.txt_loader import TxtMessageDataset
+from marl.envs.txt_env import TxtEnv
+from marl.tokenizer.tokenizer_utils import get_tokenizer
+from marl.repeaters.base import BaseRepeater
+from marl.trainer.ppo import PPOTrainer
 def parse_args():
     parser = argparse.ArgumentParser(description='Train LLM')
     parser.add_argument('-c','--config', help='config file name or path.', type=str, default='projects/ppo/internlm2/1B/four_model_4gpu.py')
@@ -56,7 +57,7 @@ if __name__ == "__main__":
     cluster_address = args.address
     if cluster_address != "auto":
         cluster_address = f"ray://{cluster_address}:10001"
-    print(f"cluster_address={cluster_address}")
+    logger.info(f"cluster_address={cluster_address}")
     coordinator = Coordinator(cluster_address, config["model_configs"])
     model_dict = coordinator.create_models()
     sft_model = model_dict["reference"]

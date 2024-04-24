@@ -1,17 +1,16 @@
-import torch
-from marl.logger import init_logger
-from marl.policy_output import PolicyOutput
+import uuid
+from typing import TypeVar
+
 from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import (
     PlacementGroupSchedulingStrategy,
 )
-from typing import TypeVar
+
 
 DEFAULT_NUM_CPUS = 1
 DEFAULT_NUM_GPUS = 1
 T = TypeVar("T")
-
-logger = init_logger(__name__)
+UUID = uuid.uuid4()  # may called multiple times in different ray instances
 
 
 # Create Ray Actors
@@ -25,7 +24,7 @@ def create_ray_actors(
     for index in range(placement_group.bundle_count):
         ray_actors[index] = trainer_class.options(
             name=f"{name_prefix}_rank_{index}",
-            namespace=f"{trainer_class.__class__.__name__}",
+            namespace=f"{UUID}_{trainer_class.__class__.__name__}",
             scheduling_strategy=PlacementGroupSchedulingStrategy(
                 placement_group=placement_group,
                 placement_group_bundle_index=index,

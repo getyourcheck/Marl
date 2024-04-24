@@ -54,3 +54,37 @@ def init_logger(name: str):
     logger.addHandler(_default_handler)
     logger.propagate = False
     return logger
+
+
+from functools import wraps
+from time import perf_counter
+
+
+def log_decorator(logger):
+    """
+    Usage:
+    @log_decorator(logger)
+    def func(a, b, ...):
+        return 1 / 0
+
+    """
+
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            logger.info(f"----------- LOG DECORATOR -----------")
+            logger.info(f"CALLED {func.__name__} ARGS: {args}; KWARGS:{kwargs}")
+            bgn = perf_counter()
+            try:
+                result = func(*args, **kwargs)
+                end = perf_counter()
+                dur = end - bgn
+                logger.info(f"{func.__name__} RESULT: {result}; DURATION: {dur:4f}s")
+                return result
+            except Exception as e:
+                logger.exception(f"{func.__name__}: {e}")
+                logger.info(f"----------- LOG DECORATOR -----------")
+
+        return wrapper
+
+    return decorator

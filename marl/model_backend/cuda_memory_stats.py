@@ -1,3 +1,5 @@
+from loguru import logger
+
 GB_SHIFT = 30
 MB_SHIFT = 20
 
@@ -36,7 +38,7 @@ class CudaMemoryStats(dict):
 
 def merge_cuda_memory_stats_list(dict_list: list[CudaMemoryStats]) -> CudaMemoryStats:
     if isinstance(dict_list, CudaMemoryStats):
-        print("WARNING: dict_list is a CudaMemoryStatus instead of a list")
+        logger.warning("dict_list is a CudaMemoryStatus instead of a list")
         return dict_list
     memory_stats_dict: CudaMemoryStats = dict_list[0]
     assert isinstance(memory_stats_dict, CudaMemoryStats)
@@ -44,4 +46,3 @@ def merge_cuda_memory_stats_list(dict_list: list[CudaMemoryStats]) -> CudaMemory
         for m in dict_list[1:]:
             memory_stats_dict.update(m)
     return memory_stats_dict
-

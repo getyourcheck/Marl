@@ -3,6 +3,7 @@ import os
 from typing import Optional, Union
 import socket
 
+from loguru import logger
 from torch.nn.modules.loss import _Loss
 from torch.optim.lr_scheduler import _LRScheduler
 from accelerate import Accelerator
@@ -21,7 +22,6 @@ from .generate_utils import (
     merge_loss_list,
 )
 from ..config_consts import *
-from ..logger import init_logger
 from ..policy_output import PolicyOutput, logprobs_from_logits
 from ..tokenizer import tokenizer_utils
 from ..utils import set_seed, expand_reward_token_id
@@ -31,7 +31,6 @@ from .models.internlm2_reward import (
     InternLM2ForCriticModel,
 )
 
-logger = init_logger(__name__)
 DEFAULT_NEW_TOKENS = 64
 MAXIMUM_NEW_TOKENS = 1024
 
@@ -630,7 +629,7 @@ class HfModelRunner:
         logger.info(f"save model to {path}")
     
     def info_rank0(self,content):
-        if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+        if self.accelerator.is_main_process:
             logger.info(content)
 
 

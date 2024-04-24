@@ -1,3 +1,4 @@
+from loguru import logger
 import time
 
 class Timer:
@@ -17,9 +18,9 @@ class Timer:
         self.end()
 
     def start(self):
-        print(f"Start {self.task_name}")
+        logger.info(f"Start {self.task_name}")
         self.start = time.time()
 
     def end(self):
         self.duration = time.time() - self.start
-        print(f"  End {self.task_name}, duration = {self.duration:.2f} seconds")
+        logger.info(f"  End {self.task_name}, duration = {self.duration:.2f} seconds")

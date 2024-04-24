@@ -1,6 +1,7 @@
 from ..policy_output import PolicyOutput
 import numpy as np
 import torch
+from loguru import logger
 from marl.model_server.base_model_server import BaseModelServer
 import time
 
@@ -106,7 +107,7 @@ class BaseRepeater(object):
         )
         policy_output = policy_model.infer_get(policy_output)
         sft_output = policy_model.infer_get(sft_output)
-        print(f"[actor & ref infer_async] duration: {round(time.time() - s_t, 2)} s")
+        logger.info(f"[actor & ref infer_async] duration: {round(time.time() - s_t, 2)} s")
 
         policy_logprobs = policy_output.logprobs.cpu() * answer_mask
         sft_logprobs = sft_output.logprobs.cpu() * answer_mask
@@ -141,7 +142,7 @@ class BaseRepeater(object):
             output_logits=True, 
             micro_batch_size=self.critic_micro_bs,
         )
-        print(f"[critic infer] duration: {round(time.time() - s_t, 2)} s")
+        logger.info(f"[critic infer] duration: {round(time.time() - s_t, 2)} s")
         values_with_last_value = value_output.logits.to(torch.float32).cpu()
         return values_with_last_value
 

@@ -1,14 +1,13 @@
 import torch
 from typing import Optional, Union
 
+from loguru import logger
 from vllm import LLM, SamplingParams
 from vllm.sampling_params import _SAMPLING_EPS
 
-from ..logger import init_logger
 from ..policy_output import PolicyOutput, concat_policy_outputs
 from ..model_backend.generate_utils import get_question_answer_mask
 
-logger = init_logger(__name__)
 
 
 class VllmGenerator:

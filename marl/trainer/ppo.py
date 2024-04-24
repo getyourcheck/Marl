@@ -1,5 +1,6 @@
 import time
 import torch
+from loguru import logger
 from marl.model_server.base_model_server import BaseModelServer
 
 import sys
@@ -59,7 +60,7 @@ class PPOTrainer(object):
 
         for _ in range(self.policy_learn_time):
             for i in range(policy_updates):
-                print('[Policy Train] start policy trains {}/{} | {}'.format(i + 1, policy_updates, _ + 1))
+                logger.info('[Policy Train] start policy trains {}/{} | {}'.format(i + 1, policy_updates, _ + 1))
                 begin = i * self.policy_minibatch
                 end = begin + self.policy_minibatch
                 policy_batch_inputs = {
@@ -93,7 +94,7 @@ class PPOTrainer(object):
                     micro_batch_size=self.actor_micro_bs
                 )
                 
-                print(f"[actor train] duration: {round(time.time() - s_t, 2)} s, {self.policy_minibatch} batch, Policy loss: {p_loss.item()}")
+                logger.info(f"[actor train] duration: {round(time.time() - s_t, 2)} s, {self.policy_minibatch} batch, Policy loss: {p_loss.item()}")
                 policy_loss.append(p_loss.item())
 
         with Timer("policy_model.sync_model") as t:
@@ -105,7 +106,7 @@ class PPOTrainer(object):
         value_loss = []
         for _ in range(self.policy_learn_time):
             for i in range(value_updates):
-                print('[Value Train] start value trains {}/{} | {}'.format(i + 1, value_updates, _ + 1))
+                logger.info('[Value Train] start value trains {}/{} | {}'.format(i + 1, value_updates, _ + 1))
                 s_t = time.time()
                 begin = i * self.value_minibatch
                 end = begin + self.value_minibatch
@@ -135,7 +136,7 @@ class PPOTrainer(object):
                     criterion=self.value_criterion,
                     micro_batch_size=self.critic_micro_bs,
                 )
-                print(f"[critic train] duration: {round(time.time() - s_t, 2)} s, {self.value_minibatch} batch,value loss: {v_loss.item()}")
+                logger.info(f"[critic train] duration: {round(time.time() - s_t, 2)} s, {self.value_minibatch} batch,value loss: {v_loss.item()}")
                 value_loss.append(v_loss.item())
 
         return value_loss

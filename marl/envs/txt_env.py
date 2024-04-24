@@ -1,5 +1,6 @@
 import time
 import torch
+from loguru import logger
 from torch.utils.data import IterableDataset
 from copy import deepcopy
 from marl.model_server.base_model_server import BaseModelServer
@@ -58,10 +59,10 @@ class TxtEnv(object):
             output_str=True, 
             generate_kwargs=self.generate_kwargs
         )
-        print(f"[actor generate] duration: {round(time.time() - s_t, 2)} s, len(inputs): {len(ppo_input_messages)} ")
+        logger.info(f"[actor generate] duration: {round(time.time() - s_t, 2)} s, len(inputs): {len(ppo_input_messages)} ")
         assert trajectories.output_str is not None
         assert len(trajectories.output_ids.shape) == 2
-        print("[actor generate] trajectories.output_ids:", trajectories.output_ids.shape)
+        logger.info("[actor generate] trajectories.output_ids:", trajectories.output_ids.shape)
         assert trajectories.answer_mask.shape == trajectories.output_ids.shape
         assert trajectories.question_mask.shape == trajectories.output_ids.shape
 
@@ -91,7 +92,7 @@ class TxtEnv(object):
             output_logprobs=False, 
             micro_batch_size=self.reward_micro_bs
         )
-        print(f"[reward infer] duration: {round(time.time() - s_t, 2)} s")
+        logger.info(f"[reward infer] duration: {round(time.time() - s_t, 2)} s")
         rewards = rm_out.logits.cpu().squeeze(-1)
         return rewards
     

@@ -1,3 +1,4 @@
+from loguru import logger
 
 def get_gpu_requirement(trainer_config: dict) -> int:
     # Calculates the number of GPUs required for a given trainer configuration.
@@ -25,7 +26,7 @@ def get_resource_requirement(model_configs: dict) -> dict:
     resources = {"num_gpus": 0}
     for name, model_config in model_configs.items():
         if "trainer_config" not in model_config:
-            print(f"[WARNING] {name} has no trainer_config. SKIP.")
+            logger.warning(f"{name} has no trainer_config. SKIP.")
             continue
         trainer_config = model_config["trainer_config"]
         num_gpus = get_gpu_requirement(trainer_config)

@@ -142,7 +142,7 @@ class TxtMessageDataset(IterableDataset):
                     ppo_sequence.append(sequence)
                     if len(ppo_sequence) == self.ppo_data_per_epoch:
                         break
-            assert len(ppo_sequence) == self.ppo_data_per_epoch, ""
+            assert len(ppo_sequence) == self.ppo_data_per_epoch, f"{len(ppo_sequence)} == {self.ppo_data_per_epoch}"
 
             print(f"prepare TxtMessageDataset done: {len(ppo_sequence)} ppo & {len(pt_sequence)} pretrain, for epoch {self.epoch_index}.")
             batch_sequence = ppo_sequence + pt_sequence

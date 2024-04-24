@@ -8,3 +8,4 @@ wandb==0.16.3
 pydantic==2.5.0
 pydantic_core==2.14.1
 grpcio==1.59.3
+loguru

@@ -1,3 +1,4 @@
+from loguru import logger
 import ray
 import torch
 from transformers import AutoConfig
@@ -20,9 +21,7 @@ class BaseModelServer:
         self.model_ref = None
         self.is_initialized = False
         self.show_cuda_mem_stats = self.model_config.get("show_cuda_mem_stats", True)
-        print(
-            f"[{self.__class__.__name__}] model_name={model_name}, model_config={model_config}"
-        )
+        logger.info(f"model_name={model_name}, model_config={model_config}")
 
     def initialize_async(self):
         model_path: str = self.model_config["model_path"]  # requisite
@@ -85,8 +84,8 @@ class BaseModelServer:
             self.generator.initialize_get()
 
         self.is_initialized = True
-        print(
-            f"[{self.__class__.__name__}] {self.model_name} has been initialized.  self.generator_eq_trainer: {self.generator_eq_trainer}"
+        logger.info(
+            f"{self.model_name} has been initialized. self.generator_eq_trainer: {self.generator_eq_trainer}"
         )
 
     @property
@@ -134,10 +133,10 @@ class BaseModelServer:
         if self.show_cuda_mem_stats:
             trainer_mem = self.trainer.get_cuda_mem_stats()
             generator_mem = self.generator.get_cuda_mem_stats()
-            print(
-                f"[{self.__class__.__name__}] {self.model_name} trainer allocated GPU memory: {trainer_mem.total_current_mb} MiB."
-                f"\n[{self.__class__.__name__}] {self.model_name} generator allocated GPU memory: {generator_mem.total_current_mb} MiB."
-                f"\n[{self.__class__.__name__}] {self.model_name} generator_eq_trainer: {self.generator_eq_trainer}"
+            logger.info(
+                f"{self.model_name} trainer allocated GPU memory: {trainer_mem.total_current_mb} MiB, "
+                f"generator allocated GPU memory: {generator_mem.total_current_mb} MiB, "
+                f"generator_eq_trainer: {self.generator_eq_trainer}"
             )
         return loss
 
@@ -186,10 +185,10 @@ class BaseModelServer:
         if self.show_cuda_mem_stats:
             trainer_mem = self.trainer.get_cuda_mem_stats()
             generator_mem = self.generator.get_cuda_mem_stats()
-            print(
-                f"[{self.__class__.__name__}] {self.model_name} trainer allocated GPU memory: {trainer_mem.total_current_mb} MiB."
-                f"\n[{self.__class__.__name__}] {self.model_name} generator allocated GPU memory: {generator_mem.total_current_mb} MiB."
-                f"\n[{self.__class__.__name__}] {self.model_name} generator_eq_trainer: {self.generator_eq_trainer}"
+            logger.info(
+                f"{self.model_name} trainer allocated GPU memory: {trainer_mem.total_current_mb} MiB, "
+                f"generator allocated GPU memory: {generator_mem.total_current_mb} MiB, "
+                f"generator_eq_trainer: {self.generator_eq_trainer}"
             )
         return policy_output
 
@@ -208,7 +207,7 @@ class BaseModelServer:
         self.trainer.release_resources()
         if not self.generator_eq_trainer:
             self.generator.release_resources()
-        print(f"[{self.__class__.__name__}] {self.model_name} is destroyed.")
+        logger.info(f"{self.model_name} is destroyed.")
 
     def _load_chat_template(self, chat_template):
         # adopted from: https://github.com/vllm-project/vllm/blob/0e163fce18594c7e29dc5a143dd6b33d213fcbf3/vllm/entrypoints/openai/serving_chat.py#L245
@@ -220,15 +219,11 @@ class BaseModelServer:
                 # If opening a file fails, set chat template to be args to
                 # ensure we decode so our escape are interpreted correctly
                 pass
-            print(
-                f"[INFO] Using supplied chat template:\n{self.tokenizer.chat_template}"
-            )
+            logger.info(f"Using input chat template:\n{self.tokenizer.chat_template}")
         elif self.tokenizer.chat_template is not None:
-            print(
-                f"[INFO] Using default chat template:\n{self.tokenizer.chat_template}"
-            )
+            logger.info(f"Using default chat template:\n{self.tokenizer.chat_template}")
         else:
-            print("[WARNING] No chat template provided. Chat API will not work.")
+            logger.warning("No chat template provided. Chat API will not work.")
 
     def save_model(self, path):
         self.trainer.save_model(path)

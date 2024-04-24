@@ -1,3 +1,4 @@
+from loguru import logger
 import torch
 from flash_attn.losses.cross_entropy import CrossEntropyLoss as FlashCrossEntropyLoss
 
@@ -12,7 +13,7 @@ class FlashGPTLMLoss(torch.nn.Module):
         super().__init__()
 
         if label_smoothing is not None and label_smoothing != 0:
-            print(f"[{self.__class__.__name__}] Use label_smoothing: {label_smoothing}")
+            logger.warning(f"Use label_smoothing: {label_smoothing}")
         self.label_smoothing = label_smoothing
 
         if parallel_output:

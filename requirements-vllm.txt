@@ -11,3 +11,4 @@ pynvml==11.5.0
 outlines
 cupy-cuda11x
 vllm==0.3.2  # source /cpfs01/shared/public/rl3m_env/env/llm-opus-20240325
+# python -m cupyx.tools.install_library --library nccl --cuda 11.x

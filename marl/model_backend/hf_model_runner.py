@@ -316,8 +316,8 @@ class HfModelRunner:
                 labels_mb = []
                 loss_weights_mb = []
                 for i in range(len(micro_batch)):
-                    input_ids_mb.append(micro_batch[i]["input_ids"])
-                    attention_mask_mb.append(micro_batch[i]["attention_mask"])
+                    input_ids_mb.append(micro_batch[i]["input_ids"].to(self.device))
+                    attention_mask_mb.append(micro_batch[i]["attention_mask"].to(self.device))
                     labels_mb.append(micro_batch[i]["labels"])
                     loss_weights_mb.append(micro_batch[i]["loss_weights"])
                 if index == 0:

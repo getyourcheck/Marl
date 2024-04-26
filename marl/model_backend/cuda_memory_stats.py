@@ -35,6 +35,9 @@ class CudaMemoryStats(dict):
     def avg_current_bytes(self):
         return self.total_current_bytes / self.num_gpus if self.num_gpus != 0 else 0
 
+    def __repr__(self):
+        return f"CudaMemoryStats: {self.num_gpus} GPU takes {self.total_current_mb} MiB"
+
 
 def merge_cuda_memory_stats_list(dict_list: list[CudaMemoryStats]) -> CudaMemoryStats:
     if isinstance(dict_list, CudaMemoryStats):

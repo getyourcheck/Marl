@@ -67,7 +67,7 @@ class HfModelRunner:
                 device_map="auto",
                 torch_dtype=torch_dtype,
                 trust_remote_code=True,
-                attn_implementation="flash_attention_2",
+                attn_implementation="flash_attention_2" if use_flash_attn else None,
             )
         elif self.model_type == MODEL_TYPE_CRITIC:
             self.model: PreTrainedModel = InternLM2ForCriticModel.from_pretrained(
@@ -75,7 +75,7 @@ class HfModelRunner:
                 device_map="auto",
                 torch_dtype=torch_dtype,
                 trust_remote_code=True,
-                attn_implementation="flash_attention_2",
+                attn_implementation="flash_attention_2" if use_flash_attn else None,
             )
         else:
             self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
@@ -83,6 +83,7 @@ class HfModelRunner:
                 device_map="auto",
                 torch_dtype=torch_dtype,
                 trust_remote_code=True,
+                attn_implementation="flash_attention_2" if use_flash_attn else None,
             )
 
         # Graident checkpointing

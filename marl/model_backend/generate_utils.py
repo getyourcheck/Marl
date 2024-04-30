@@ -31,7 +31,7 @@ def get_question_answer_mask(
 
 
 def partition_by_micro_batch_size(
-    input_ids: torch.Tensor,
+    input_ids: Union[list[str], torch.Tensor],
     micro_batch_size: int,
     attention_mask: torch.Tensor = None,
     labels: Optional[
@@ -39,7 +39,7 @@ def partition_by_micro_batch_size(
     ] = None,
 ) -> list[dict[str, torch.Tensor]]:
     micro_batches: list[dict[str, torch.Tensor]] = []
-    batch_size = input_ids.shape[0]
+    batch_size = input_ids.shape[0] if isinstance(input_ids, torch.Tensor) else len(input_ids)
     if micro_batch_size <= 0 or batch_size == micro_batch_size:
         micro_batch = {}
         micro_batch["input_ids"] = input_ids
@@ -53,7 +53,10 @@ def partition_by_micro_batch_size(
     num_splits = int(batch_size // micro_batch_size) + (
         batch_size % micro_batch_size > 0
     )
-    input_ids_split = torch.split(input_ids, micro_batch_size, dim=0)
+    if isinstance(input_ids, torch.Tensor):
+        input_ids_split = torch.split(input_ids, micro_batch_size, dim=0)
+    else:
+        input_ids_split = [input_ids[i:i+micro_batch_size] for i in range(0, len(input_ids), micro_batch_size)]
     attention_mask_split = (
         torch.split(attention_mask, micro_batch_size, dim=0)
         if attention_mask is not None

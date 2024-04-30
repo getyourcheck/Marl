@@ -22,11 +22,18 @@ def test_get_model_from():
                 loss_type="per_seq",
             ),
             parallel=dict(
-                data=dict(size=2, mode="ddp"),
+                data=dict(size=2, mode="deepspeed"),
                 tensor=dict(size=1, mode="1d"),
                 pipeline=dict(size=1, interleaved_overlap=False),
                 sequence=False,
             ),
+            deepspeed_config={
+                "zero_optimization": {
+                    "stage": 3,
+                },
+                "gradient_accumulation_steps": 1,
+                "train_micro_batch_size_per_gpu": 1,
+            },
         ),
         generator_config=dict(
             shared_with_trainer=False,
@@ -81,6 +88,8 @@ def test_get_model_from():
         name="vllm_engine", config=generator_config
     )
     
+    hfRayActorGroup.initialize_get()
+    vllmGeneratorRayActorGroup.initialize_get()
     hfRayActorGroup.init_process_group(vllmGeneratorRayActorGroup)
 
     expected_output = """The capital of France is, just tell me the city name.
@@ -91,6 +100,7 @@ Paris, the capital of France is known as the world's most beautiful and iconic c
     step = 32
     input_str = [
         "The capital of France is, just tell me the city name.",
+        "The capital of Canada is, just tell me the city name.",
     ]
     policy_output: PolicyOutput = vllmGeneratorRayActorGroup.generate(
         input_str,

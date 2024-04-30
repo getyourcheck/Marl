@@ -163,6 +163,7 @@ from .ray_actor_group import RayActorGroup
 from .ray_utils import DEFAULT_NUM_CPUS, DEFAULT_NUM_GPUS
 from ..config_utils import get_gpu_requirement, get_tp_size, get_dp_size
 from ..policy_output import concat_policy_outputs
+from .generate_utils import partition_by_micro_batch_size
 
 
 class VllmGeneratorRayActor(VllmGenerator, RayActorMixin):
@@ -238,11 +239,24 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
 
     # Generation
     def generate_async(self, input_ids, attention_mask, *args, **kwargs):
+        assert (
+            len(input_ids) >= self.dp_size
+        ), f"The length of input_ids({len(input_ids)}) must not be less than dp_size({self.dp_size})."
+        micro_batch_size = len(input_ids) // self.dp_size + (
+            len(input_ids) % self.dp_size > 0
+        )  # round up division, i.e., math.ceil(a / b)
+        micro_batches = partition_by_micro_batch_size(
+            input_ids, micro_batch_size, attention_mask
+        )
+        assert len(micro_batches) == self.dp_size, f"{len(micro_batches)}, :{self.dp_size}"
         return [
-            actor.generate.remote(
-                input_ids, attention_mask=attention_mask, *args, **kwargs
+            self.ray_actors[index].generate.remote(
+                inputs=micro_batch["input_ids"],
+                attention_mask=micro_batch["attention_mask"],
+                *args, 
+                **kwargs,
             )
-            for actor in self.ray_actors
+            for index, micro_batch in enumerate(micro_batches)
         ]
 
     def generate_get(self, object_refs, timeout=None):

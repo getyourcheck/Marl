@@ -29,5 +29,12 @@ def create_ray_actors(
                 placement_group=placement_group,
                 placement_group_bundle_index=index,
             ),
+            runtime_env=set_runtime_env(),
         ).remote(config)
     return ray_actors
+
+def set_runtime_env():
+    runtime_env = {
+        "env_vars": {"HF_ENDPOINT": "https://hf-mirror.com"}
+    }
+    return runtime_env

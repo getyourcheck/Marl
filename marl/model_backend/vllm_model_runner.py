@@ -61,6 +61,8 @@ class VllmGenerator:
                 sp.__dict__[k] = v
             elif k == "num_beams" and v > 1:
                 sp.__dict__["use_beam_search"] = True
+            elif k == "eos_token_id":
+                sp.__dict__["stop_token_ids"] = [v]
 
         sp.top_k = -1 if sp.top_k <= 1 else sp.top_k
         sp._verify_args()
@@ -95,9 +97,17 @@ class VllmGenerator:
 
         if isinstance(inputs, torch.Tensor):
             if len(inputs.shape) == 2:  # e.g., [batch_size, seq_len]
-                prompt = self.tokenizer.batch_decode(inputs)
+                prompt = self.tokenizer.batch_decode(
+                    inputs,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
+                )
             elif len(inputs.shape) == 1:  # e.g., [seq_len]
-                prompt = self.tokenizer.decode(inputs)
+                prompt = self.tokenizer.decode(
+                    inputs,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
+                )
             else:
                 raise ValueError(f"Unsupported tensor inputs of shape({inputs.shape})")
             # TODO: use prompt_token_ids to accept torch.Tensor input
@@ -157,7 +167,7 @@ from ray.util.placement_group import (
     placement_group as create_placement_group,
 )
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
-from .ray_utils import create_ray_actors
+from .ray_utils import set_runtime_env
 from .ray_actor_mixin import RayActorMixin
 from .ray_actor_group import RayActorGroup
 from .ray_utils import DEFAULT_NUM_CPUS, DEFAULT_NUM_GPUS
@@ -219,6 +229,7 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
                     num_cpus=1,
                     num_gpus=ray_actor_num_gpus,
                     scheduling_strategy=scheduling_strategy,
+                    runtime_env=set_runtime_env(),
                 )
                 .remote(config)
             )

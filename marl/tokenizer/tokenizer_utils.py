@@ -83,5 +83,5 @@ def encode(
             )
             for input in inputs
         ]
-    output = tokenizer(inputs, return_tensors="pt", padding=True)
+    output = tokenizer(inputs, return_tensors="pt", padding=True, add_special_tokens=False)
     return output.input_ids, output.attention_mask

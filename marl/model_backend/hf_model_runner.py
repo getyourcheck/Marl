@@ -98,6 +98,7 @@ class HfModelRunner:
             tokenizer_path, trust_remote_code=True
         )
         self.tokenizer.pad_token = self.tokenizer.unk_token
+        self.tokenizer.padding_side = "left"
         if self.tokenizer.chat_template is None:
             raise NotImplementedError("Make sure tokenizer has chat_template.")
 
@@ -219,9 +220,12 @@ class HfModelRunner:
     ) -> torch.Tensor:
         input_ids = input_ids.to(self.device)
         labels = input_ids.clone() if labels is None else labels
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids.masked_fill_(attention_mask == 0, 1)
         batch = {
             "input_ids": input_ids,
             "attention_mask": attention_mask,
+            "position_ids": position_ids.to(self.device)
         }
         self.model.train()
 
@@ -356,11 +360,14 @@ class HfModelRunner:
         **_ignored,
     ) -> PolicyOutput:
         assert isinstance(input_ids, torch.Tensor)
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids.masked_fill_(attention_mask == 0, 1)
         model_output = self.model(
             input_ids.to(self.device),
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             attention_mask=attention_mask,
+            position_ids=position_ids.to(self.device),
             return_dict=True,
             **infer_kwargs,
         )
@@ -406,7 +413,7 @@ class HfModelRunner:
             input_ids, attention_mask = tokenizer_utils.encode(inputs, self.tokenizer)
             if self.model_type == MODEL_TYPE_REWARD:
                 input_ids, attention_mask = expand_reward_token_id(
-                    self.model.reward_token_id, input_ids, attention_mask
+                    self.model.reward_token_id, input_ids, attention_mask, pad_token_id=self.tokenizer.pad_token_id
                 )
         else:
             input_ids = inputs

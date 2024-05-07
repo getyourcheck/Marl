@@ -43,6 +43,7 @@ class BaseModelServer:
             tokenizer_path, trust_remote_code=True
         )
         self.tokenizer.pad_token = self.tokenizer.unk_token
+        self.tokenizer.padding_side = "left"
         trainer_config["tokenizer_pad_token_id"] = self.tokenizer.pad_token_id
 
         if self.trainer_type == ENGINE_HUGGINGFACE:

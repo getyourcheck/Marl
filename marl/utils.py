@@ -25,26 +25,22 @@ def set_seed(seed: int = DEFAULT_SEED_NUMBER):
     )
 
 
-def expand_reward_token_id(
-    reward_token_id: int,
-    input_ids: torch.Tensor,
-    attention_mask: Optional[torch.Tensor] = None,
-):
-    input_ids = torch.cat(
-        [
-            input_ids,
-            torch.tensor([[reward_token_id]], dtype=torch.long).expand(
-                input_ids.shape[0], 1
-            ),
-        ],
-        dim=1,
-    ).to(input_ids.device)
-    if attention_mask is not None:
-        attention_mask = torch.cat(
-            [
-                attention_mask,
-                torch.ones(attention_mask.shape[0], 1, dtype=torch.bool),
-            ],
-            dim=1,
-        ).to(attention_mask.device)
-    return input_ids, attention_mask
+def expand_reward_token_id(reward_token_id:int, input_ids:torch.Tensor, attention_mask:Optional[torch.Tensor]=None, pad_token_id=0):
+    assert len(input_ids.shape) == 2, f"expand_reward_token_id error, len(input_ids.shape()) = {len(input_ids.shape())}"
+    # TODO, hardcode
+    new_input_ids = torch.zeros((input_ids.shape[0], input_ids.shape[1] + 1), dtype=input_ids.dtype).to(input_ids.device)
+    new_attention_mask = torch.zeros_like(new_input_ids, dtype=torch.int64).to(input_ids.device)
+    for i in range(input_ids.size(0)):
+        row = input_ids[i]
+        nonzero_index = (row != pad_token_id).nonzero(as_tuple=False)
+        if nonzero_index.numel() > 0:
+            nonzero_index = nonzero_index[-1] + 1
+            new_input_ids[i] = torch.cat((input_ids[i][:nonzero_index], torch.tensor([reward_token_id], dtype=input_ids.dtype).to(input_ids.device), input_ids[i][nonzero_index:]), 0).to(input_ids.device)
+            if attention_mask is not None:
+                new_attention_mask[i] = torch.cat((attention_mask[i][:nonzero_index], torch.tensor([1], dtype=torch.int64).to(input_ids.device), attention_mask[i][nonzero_index:]), 0).to(input_ids.device)
+        else:
+            new_input_ids[i] = torch.cat((input_ids[i][:], torch.tensor([reward_token_id], dtype=input_ids.dtype).to(input_ids.device)), 0).to(input_ids.device)
+            if attention_mask is not None:
+                new_attention_mask[i] = torch.cat((attention_mask[i][:], torch.tensor([1], dtype=torch.int64).to(input_ids.device)), 0).to(input_ids.device)   
+
+    return new_input_ids, new_attention_mask

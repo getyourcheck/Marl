@@ -36,6 +36,7 @@ class TxtEnv(object):
         self.clip_reward_min = clip_reward_min
         self.clip_reward_max = clip_reward_max
         self.generate_kwargs:dict = generate_kwargs
+        self.async_reward:bool = True
 
     def rollout(self, policy_model:BaseModelServer, display=False):
         sample_data = next(self.dataloader)
@@ -66,10 +67,14 @@ class TxtEnv(object):
         assert trajectories.answer_mask.shape == trajectories.output_ids.shape
         assert trajectories.question_mask.shape == trajectories.output_ids.shape
 
-        rewards = self._get_reward(ppo_input_messages, trajectories)
-        clipped_rewards = torch.clamp(rewards, min=self.clip_reward_min, max=self.clip_reward_max)
-        trajectories["rewards"] = rewards
-        trajectories["clipped_rewards"] = clipped_rewards
+        if self.async_reward:
+            reward_output_ref = self.get_reward_async(ppo_input_messages, trajectories)
+            trajectories["reward_output_ref"] = reward_output_ref
+        else:
+            rewards = self.get_reward(ppo_input_messages, trajectories)
+            trajectories["rewards"] = rewards
+            clipped_rewards = torch.clamp(rewards, min=self.clip_reward_min, max=self.clip_reward_max)
+            trajectories["clipped_rewards"] = clipped_rewards
 
         # pretrain data
         if len(pt_input_messages) > 0:
@@ -79,7 +84,32 @@ class TxtEnv(object):
 
         return trajectories
     
-    def _get_reward(self, input_messages, policyout):
+
+    # default get_reward() is blocking. get_reward_async() needs to call get_reward_collect()
+    def get_reward_async(self, input_messages, policyout):
+        input_messages = deepcopy(input_messages)
+        if self.reward_function is None:
+            print(f"[TxtEnv] No reward funtion, no reward provided.")
+            return None
+        for i in range(len(range(len(policyout.output_ans_str)))):
+            input_messages[i].append({"role": "assistant", "content": policyout.output_ans_str[i]})
+        s_t = time.time()
+        reward_output_ref = self.reward_function.infer_async(
+            input_messages, 
+            output_logprobs=False, 
+            micro_batch_size=self.reward_micro_bs
+        )
+        logger.info(f"[reward infer] async duration: {round(time.time() - s_t, 2)} s")
+        return reward_output_ref
+
+    def get_reward_collect(self, reward_output_ref):
+        s_t = time.time()
+        rm_out = self.reward_function.infer_get(reward_output_ref)
+        logger.info(f"[reward infer] async wait duration: {round(time.time() - s_t, 2)} s")
+        rewards = rm_out.logits.cpu().squeeze(-1)
+        return rewards
+
+    def get_reward(self, input_messages, policyout):
         input_messages = deepcopy(input_messages)
         if self.reward_function is None:
             print(f"[TxtEnv] No reward funtion, no reward provided.")

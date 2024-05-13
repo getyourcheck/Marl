@@ -60,11 +60,12 @@ class BaseRepeater(object):
             trajectories:PolicyOutput, 
             policy_model:BaseModelServer, 
             value_model:BaseModelServer, 
-            sft_model:BaseModelServer=None
+            sft_model:BaseModelServer=None,
+            env=None,  # only used for async reward model.infer_get() in _get_kl_rewards
         ):
         if sft_model is not None:
             self.sft_model:BaseModelServer = sft_model
-        kl_rewards, policy_logprobs, sft_logprobs, kl_distance = self._get_kl_rewards(trajectories, policy_model)
+        kl_rewards, policy_logprobs, sft_logprobs, kl_distance = self._get_kl_rewards(trajectories, policy_model, env)
         trajectories["kl_distance"] = kl_distance
         trajectories["kl_rewards"] = kl_rewards
         trajectories["policy_logprobs"] = policy_logprobs
@@ -85,9 +86,7 @@ class BaseRepeater(object):
 
         return trajectories
 
-    def _get_kl_rewards(self, trajectories: PolicyOutput, policy_model:BaseModelServer):
-        # rewards = trajectories.rewards
-        rewards = trajectories.clipped_rewards
+    def _get_kl_rewards(self, trajectories: PolicyOutput, policy_model:BaseModelServer, env=None):
         answer_mask = trajectories.answer_mask.cpu()
         attention_mask = trajectories.attention_mask.cpu()
         s_t = time.time()
@@ -109,6 +108,16 @@ class BaseRepeater(object):
         sft_output = policy_model.infer_get(sft_output)
         logger.info(f"[actor & ref infer_async] duration: {round(time.time() - s_t, 2)} s")
 
+        ################## Experimental ################################################
+        if env.async_reward:
+            rewards = env.get_reward_collect(trajectories["reward_output_ref"])
+            trajectories["reward_output_ref"] = None
+            trajectories["rewards"] = rewards
+            clipped_rewards = torch.clamp(rewards, min=env.clip_reward_min, max=env.clip_reward_max)
+            trajectories["clipped_rewards"] = clipped_rewards
+        ################## Experimental ################################################
+        rewards = trajectories.clipped_rewards
+
         policy_logprobs = policy_output.logprobs.cpu() * answer_mask
         sft_logprobs = sft_output.logprobs.cpu() * answer_mask
 
@@ -121,18 +130,18 @@ class BaseRepeater(object):
         # C1rN09: <pad> tokens should have 0 reward
         kl_rewards = kl_divergence_estimate * answer_mask
 
-        # (bs, 1), Note that in the answerr_mask, the padding is 0
+        # (bs, 1), Note that in the answer_mask, the padding is 0
         begins_index, answers_length = find_mask_begin(answer_mask, 0)
-        finnal_rewards = kl_rewards.clone()
+        final_rewards = kl_rewards.clone()
         count = 0
         kl_distance = []
         # (bs, max_total_len) only add the rewards in the last.
         for begin_index, ans_len in zip(begins_index, answers_length):
-            kl_distance.append(finnal_rewards[count, begin_index:begin_index+ans_len].mean().item())
-            finnal_rewards[count, begin_index+ans_len-1] += rewards[count]
+            kl_distance.append(final_rewards[count, begin_index:begin_index+ans_len].mean().item())
+            final_rewards[count, begin_index+ans_len-1] += rewards[count]
             count += 1
 
-        return finnal_rewards, policy_logprobs, sft_logprobs, kl_distance
+        return final_rewards, policy_logprobs, sft_logprobs, kl_distance
 
     def _get_values(self, trajectories: PolicyOutput, value_model:BaseModelServer):
         s_t = time.time()

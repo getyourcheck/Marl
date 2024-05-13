@@ -101,34 +101,35 @@ class PPOTrainer(object):
             policy_model.sync_model()
         return policy_loss, pt_loss
 
+    def value_learn_async(self, trajectories, value_model:BaseModelServer):
+        value_updates = len(trajectories.output_ids) // self.value_minibatch
+        value_loss = []
+        assert value_updates == 1 and self.policy_learn_time == 1, f"value_updates={value_updates} * self.policy_learn_time={self.policy_learn_time} > 1"
+        s_t = time.time()
+        value_batch_inputs, labels = self._value_learn_prepare(0, 0, trajectories, value_updates)
+        v_loss_ref = value_model.train_async(
+            input_ids=value_batch_inputs["input_ids"],
+            labels=labels,     
+            attention_mask=value_batch_inputs["attention_mask"],
+            criterion=self.value_criterion,
+            micro_batch_size=self.critic_micro_bs,
+        )
+        logger.info(f"[critic train] async duration: {round(time.time() - s_t, 2)} s, {self.value_minibatch} batch,value loss: {v_loss_ref}")
+        value_loss.append(v_loss_ref)
+        return value_loss
+    
+    def value_learn_get(self, value_loss_ref, value_model:BaseModelServer):
+        with Timer("value_model.train_get"):
+            return [value_model.train_get(ref).item() for ref in value_loss_ref]
+
     def value_learn(self, trajectories, value_model:BaseModelServer):
         value_updates = len(trajectories.output_ids) // self.value_minibatch
         value_loss = []
-        for _ in range(self.policy_learn_time):
-            for i in range(value_updates):
-                logger.info('[Value Train] start value trains {}/{} | {}'.format(i + 1, value_updates, _ + 1))
+
+        for learn_i in range(self.policy_learn_time):
+            for step_i in range(value_updates):
                 s_t = time.time()
-                begin = i * self.value_minibatch
-                end = begin + self.value_minibatch
-                value_batch_inputs = {
-                    "input_ids": trajectories.output_ids[begin:end, :],
-                    "values": trajectories.values_with_last_value[begin:end, :],
-                    "returns": trajectories.returns[begin:end, :],
-                    "answer_mask": trajectories.answer_mask[begin:end, :],
-                    "attention_mask": trajectories.attention_mask[begin:end, :]
-                }
-                assert len(value_batch_inputs['input_ids']) == self.value_minibatch, "[Value learn] make sure len(value_batch_inputs) == self.value_minibatch"
-                
-                loss_factor = 1.0
-                labels = dict(
-                    old_values=value_batch_inputs["values"],
-                    returns=value_batch_inputs["returns"],
-                    mask=value_batch_inputs["answer_mask"],
-                    loss_factor=torch.tensor(loss_factor),
-                )
-                # for k, v in labels.items():
-                #     print("[Value Train]]", k, v.shape)
-                # assert "input_ids" in batch_inputs.keys()
+                value_batch_inputs, labels = self._value_learn_prepare(step_i, learn_i, trajectories, value_updates)
                 v_loss = value_model.train(
                     input_ids=value_batch_inputs["input_ids"],
                     labels=labels,     
@@ -138,5 +139,26 @@ class PPOTrainer(object):
                 )
                 logger.info(f"[critic train] duration: {round(time.time() - s_t, 2)} s, {self.value_minibatch} batch,value loss: {v_loss.item()}")
                 value_loss.append(v_loss.item())
-
         return value_loss
+
+    def _value_learn_prepare(self, step_i, learn_i, trajectories, value_updates):
+        logger.info('[Value Train] start value trains {}/{} | {}'.format(step_i + 1, value_updates, learn_i + 1))
+        begin = step_i * self.value_minibatch
+        end = begin + self.value_minibatch
+        value_batch_inputs = {
+            "input_ids": trajectories.output_ids[begin:end, :],
+            "values": trajectories.values_with_last_value[begin:end, :],
+            "returns": trajectories.returns[begin:end, :],
+            "answer_mask": trajectories.answer_mask[begin:end, :],
+            "attention_mask": trajectories.attention_mask[begin:end, :]
+        }
+        assert len(value_batch_inputs['input_ids']) == self.value_minibatch, "[Value learn] make sure len(value_batch_inputs) == self.value_minibatch"
+
+        loss_factor = 1.0
+        labels = dict(
+            old_values=value_batch_inputs["values"],
+            returns=value_batch_inputs["returns"],
+            mask=value_batch_inputs["answer_mask"],
+            loss_factor=torch.tensor(loss_factor),
+        )
+        return value_batch_inputs, labels

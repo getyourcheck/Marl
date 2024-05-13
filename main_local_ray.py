@@ -3,6 +3,7 @@ import os
 import time
 
 from loguru import logger
+import torch
 import numpy as np
 
 from marl.config import Config
@@ -94,21 +95,25 @@ if __name__ == "__main__":
         s_t = time.time()
         trajectories = txt_env.rollout(policy_model=actor_model)
         # deal with trajectories
-        trajectories = rl_repeater.process(trajectories, policy_model=actor_model, value_model=critic_model, sft_model=None)
+        trajectories = rl_repeater.process(trajectories, policy_model=actor_model, value_model=critic_model, sft_model=None, env=txt_env)
 
-        # # for policy & critic learn
+        # # for value & policy learn
+        value_loss_ref = ppo.value_learn_async(trajectories, critic_model)
+
         if pretrain_step <= 0:
             ppo_loss, pt_loss = ppo.policy_learn(trajectories, actor_model)
             logger_train.info(f"[Policy Train] Step: {step}, ppo loss: {ppo_loss}, pretrain loss: {pt_loss}")
             logger_train.info(f"[Policy Train] Step: {step}, kl: {np.mean(trajectories.kl_distance)}")
         
-        logger_train.info(f"rewards: {trajectories.rewards.mean()}")
-
-        value_loss = ppo.value_learn(trajectories, critic_model)
+        value_loss = ppo.value_learn_get(value_loss_ref, critic_model)
         logger_train.info(f"[Value Train] step: {step}, value loss: {value_loss}")
+        logger_train.info(f"rewards: {trajectories.rewards.mean()}")
         pretrain_step -= 1
-        with open(f"{work_dir}/rollout.log", "a") as file:
-            file.write(f"generates: {trajectories.output_str}")
+
+        if config["rollout_config"].get("write_to_file", True):
+            with open(f"{work_dir}/rollout.log", "a") as file:
+                file.write(f"generates: {trajectories.output_str}")
+
         step += 1
         logger_train.info(f"[end to end] duration: {time.time() - s_t} s")
         if step % save_interval == 0:

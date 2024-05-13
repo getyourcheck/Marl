@@ -65,7 +65,7 @@ class PPOTrainer(object):
                 end = begin + self.policy_minibatch
                 policy_batch_inputs = {
                     "input_ids": trajectories.output_ids[begin:end, :],
-                    "sft_logprobs": trajectories.sft_logprobs[begin:end, :],
+                    "policy_logprobs": trajectories.policy_logprobs[begin:end, :],
                     "advs": trajectories.advantages[begin:end, :],
                     "answer_mask": trajectories.answer_mask[begin:end, :],
                     "attention_mask": trajectories.attention_mask[begin:end, :]
@@ -74,7 +74,7 @@ class PPOTrainer(object):
 
                 loss_factor = 1.0
                 labels = dict(input_ids=policy_batch_inputs["input_ids"],
-                            old_logprobs=policy_batch_inputs["sft_logprobs"],
+                            old_logprobs=policy_batch_inputs["policy_logprobs"],
                             advantages=policy_batch_inputs["advs"],
                             mask=policy_batch_inputs["answer_mask"],
                             loss_factor=torch.tensor(loss_factor),

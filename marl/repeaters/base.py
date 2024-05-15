@@ -24,6 +24,41 @@ def find_mask_begin(padded_datas, mask_id=0):
         assert is_flag
     return begin_indexs, lengths
 
+class RunningStates:
+    # adopt from https://github.com/DLR-RM/stable-baselines3/blob/master/stable_baselines3/common/running_mean_std.py
+    def __init__(self, epsilon: float = 1e-4):
+        self.mean = torch.tensor(0, dtype=torch.float32)
+        self.var = torch.tensor(0, dtype=torch.float32)
+        self.count = epsilon
+
+    def update(self, x: torch.Tensor):
+        # TODO: adapt to dp
+        x_var, x_mean = torch.var_mean(x.cpu(), unbiased=False)
+        x_count = x.shape[0]
+        self.update_from_moments(x_mean, x_var, x_count)
+
+    def update_from_other(self, other: "RunningStates"):
+        self.update_from_moments(other.mean, other.var, other.count)
+
+    def update_from_moments(self, mean: torch.Tensor, var: torch.Tensor, count: int):
+        delta = mean - self.mean
+        tot_count = self.count + count
+        m_a = self.var * self.count
+        m_b = var * count
+        m_2 = m_a + m_b + delta**2 * self.count * count / (self.count + count)
+        new_var = m_2 / (self.count + count)
+
+        self.mean += delta * count / tot_count
+        self.var = new_var
+        self.count = tot_count
+
+    def state_dict(self):
+        return dict(mean=self.mean, var=self.var, count=self.count)
+
+    def load_state_dict(self, states):
+        self.mean = states["mean"]
+        self.var = states["var"]
+        self.count = states["count"]
 
 class BaseRepeater(object):
     def __init__(
@@ -39,7 +74,8 @@ class BaseRepeater(object):
             gamma = 1.0,
             gae_lambda = 0.95,
             answer_end_id = 92542,
-            norm_adv = True,
+            norm_adv = False,
+            norm_rewards = True,
             **kwargs,
         ):
         self.sft_model = sft_model
@@ -53,7 +89,9 @@ class BaseRepeater(object):
         self.gamma = gamma
         self.gae_lambda = gae_lambda
         self.answer_end_id = answer_end_id
-        self.norm_adv = norm_adv
+        self.norm_rewards = norm_rewards
+        if self.norm_rewards:
+            self.running_states = RunningStates(epsilon=0)
 
     def process(
             self, 
@@ -63,44 +101,40 @@ class BaseRepeater(object):
             sft_model:BaseModelServer=None,
             env=None,  # only used for async reward model.infer_get() in _get_kl_rewards
         ):
+        action_mask = trajectories["action_mask"]
+        num_actions = action_mask.size(1)
         if sft_model is not None:
             self.sft_model:BaseModelServer = sft_model
-        kl_rewards, policy_logprobs, sft_logprobs, kl_distance = self._get_kl_rewards(trajectories, policy_model, env)
-        trajectories["kl_distance"] = kl_distance
+        kl_rewards, entropy, kl_distance, policy_logprobs, sft_logprobs = self._get_kl_rewards(trajectories, policy_model,env=env)
+        trajectories["kl"] = (kl_distance * action_mask).sum(axis=-1) / action_mask.sum(axis=-1)
+        trajectories["entropy"] = entropy
         trajectories["kl_rewards"] = kl_rewards
         trajectories["policy_logprobs"] = policy_logprobs
         trajectories["sft_logprobs"] = sft_logprobs
 
-        values_with_last_value = self._get_values(trajectories, value_model)
-        trajectories["values_with_last_value"] = values_with_last_value
-
-        advantages, returns = self._get_advantages_and_returns(trajectories)
-        answer_mask = trajectories["answer_mask"].cpu()
-        if self.norm_adv:
-            mean =  torch.sum(advantages) / torch.sum(answer_mask + 1e-8)
-            var = torch.sum(((advantages - mean) ** 2) * answer_mask) / (torch.sum(answer_mask) + 1e-8)
-            trajectories["advantages"] = (advantages - mean) * torch.rsqrt(var + 1e-8)
-        else:
-            trajectories["advantages"] = advantages
+        values = self._get_values(trajectories, value_model)
+        old_values = values[:, -num_actions:]
+        advantages, returns = self.get_advantages_and_returns(old_values, kl_rewards, action_mask)
+    
+        trajectories["advantages"] = advantages
         trajectories["returns"] = returns
+        trajectories["old_values"] = old_values
 
         return trajectories
 
     def _get_kl_rewards(self, trajectories: PolicyOutput, policy_model:BaseModelServer, env=None):
-        answer_mask = trajectories.answer_mask.cpu()
-        attention_mask = trajectories.attention_mask.cpu()
         s_t = time.time()
         policy_output = policy_model.infer_async(
             inputs=trajectories.output_ids, 
             micro_batch_size=self.actor_micro_bs, 
-            attention_mask=attention_mask, 
+            attention_mask=trajectories.attention_mask, 
             output_logits=False, 
             output_logprobs=True
         )
         sft_output = self.sft_model.infer_async(
             inputs=trajectories.output_ids, 
             micro_batch_size=self.ref_micro_bs, 
-            attention_mask=attention_mask, 
+            attention_mask=trajectories.attention_mask, 
             output_logits=False, 
             output_logprobs=True
         )
@@ -112,52 +146,50 @@ class BaseRepeater(object):
         if env.async_reward:
             rewards = env.get_reward_collect(trajectories["reward_output_ref"])
             trajectories["reward_output_ref"] = None
-            trajectories["rewards"] = rewards
             clipped_rewards = torch.clamp(rewards, min=env.clip_reward_min, max=env.clip_reward_max)
+            trajectories["rewards"] = rewards
             trajectories["clipped_rewards"] = clipped_rewards
         ################## Experimental ################################################
         rewards = trajectories.clipped_rewards
+        if self.norm_rewards:
+            self.running_states.update(rewards)
+            norm_reward_score = (rewards - self.running_states.mean) / (self.running_states.var.sqrt() + 1e-8)
+        action_mask = trajectories.action_mask
+        num_actions = action_mask.size(1)
 
-        policy_logprobs = policy_output.logprobs.cpu() * answer_mask
-        sft_logprobs = sft_output.logprobs.cpu() * answer_mask
+        policy_logprobs = policy_output.logprobs[:, -num_actions:]
+        sft_logprobs = sft_output.logprobs[:, -num_actions:]
 
-        kl_div = policy_logprobs - sft_logprobs
+        if self.kl_coeff <= 0.0:
+            self.kl_coeff = 0.0
+        # compute_approx_kl
+        log_ratio = policy_logprobs - sft_logprobs
+        kl = log_ratio * action_mask
+        kl_reward = -self.kl_coeff * kl
 
-        kl_divergence_estimate = - 1.0 * self.kl_coeff * kl_div
-        # C1rN09: some tokens are supressed which lead log_probs to be -Inf. This will make ratios `nan`
-        is_inf = torch.logical_and(policy_logprobs.isinf(), sft_logprobs.isinf())
-        kl_divergence_estimate = torch.where(is_inf, 0, kl_divergence_estimate)
-        # C1rN09: <pad> tokens should have 0 reward
-        kl_rewards = kl_divergence_estimate * answer_mask
+        eos_indices = action_mask.size(1) - 1 - action_mask.long().fliplr().argmax(dim=1, keepdim=True)
+        last_reward = torch.zeros_like(kl).scatter_(dim=1, index=eos_indices, src=norm_reward_score.unsqueeze(1).to(kl.dtype))
 
-        # (bs, 1), Note that in the answer_mask, the padding is 0
-        begins_index, answers_length = find_mask_begin(answer_mask, 0)
-        final_rewards = kl_rewards.clone()
-        count = 0
-        kl_distance = []
-        # (bs, max_total_len) only add the rewards in the last.
-        for begin_index, ans_len in zip(begins_index, answers_length):
-            kl_distance.append(final_rewards[count, begin_index:begin_index+ans_len].mean().item())
-            final_rewards[count, begin_index+ans_len-1] += rewards[count]
-            count += 1
+        reward = last_reward + kl_reward
 
-        return final_rewards, policy_logprobs, sft_logprobs, kl_distance
+        entropy = - (policy_logprobs * action_mask).sum(axis=-1) / action_mask.sum(axis=-1)
+        return reward, entropy, kl, policy_logprobs, sft_logprobs
 
     def _get_values(self, trajectories: PolicyOutput, value_model:BaseModelServer):
         s_t = time.time()
         value_output = value_model.infer(
             inputs = trajectories.output_ids, 
-            attention_mask=trajectories.answer_mask, 
+            attention_mask=trajectories.attention_mask, 
             output_logits=True, 
             micro_batch_size=self.critic_micro_bs,
         )
-        logger.info(f"[critic infer] duration: {round(time.time() - s_t, 2)} s")
-        values_with_last_value = value_output.logits.to(torch.float32).cpu()
-        return values_with_last_value
+        print(f"[critic infer] duration: {round(time.time() - s_t, 2)} s")
+        raw_values = value_output.logits.squeeze(-1)
+        return raw_values
 
     def _get_advantages_and_returns(self, trajectories):
-        output_ids = trajectories.output_ids.cpu()
-        answer_mask = trajectories.answer_mask.cpu()
+        output_ids = trajectories.output_ids
+        answer_mask = trajectories.answer_mask
         values_with_last_value = trajectories.values_with_last_value
         kl_rewards = trajectories.kl_rewards
 
@@ -201,3 +233,26 @@ class BaseRepeater(object):
     # TODO
     def _get_fine_grained_values(self, trajectories):
         pass
+
+    def get_advantages_and_returns(
+        self,
+        values: torch.Tensor,
+        rewards: torch.Tensor,
+        action_mask: torch.Tensor,
+    ):
+        lastgaelam = 0
+        advantages_reversed = []
+        response_length = rewards.size(1)
+
+        # Mask invalid responses
+        values = action_mask * values
+        rewards = action_mask * rewards
+
+        for t in reversed(range(response_length)):
+            nextvalues = values[:, t + 1] if t < response_length - 1 else 0.0
+            delta = rewards[:, t] + self.gamma * nextvalues - values[:, t]
+            lastgaelam = delta + self.gamma * self.gae_lambda * lastgaelam
+            advantages_reversed.append(lastgaelam)
+        advantages = torch.stack(advantages_reversed[::-1], dim=1)
+        returns = advantages + values
+        return advantages.detach(), returns

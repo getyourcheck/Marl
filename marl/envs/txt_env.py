@@ -4,6 +4,67 @@ from loguru import logger
 from torch.utils.data import IterableDataset
 from copy import deepcopy
 from marl.model_server.base_model_server import BaseModelServer
+import re
+
+def get_data(path):
+    file = open(path, "r")
+    line = file.readline()
+    data = {}
+    array = []
+    while line:
+        if line == '\n':
+            line = file.readline()
+            continue
+        if line == '#######################\n':
+            GLOBAL_STEPS = file.readline() ## GLOBAL_STEPS = 0000 #
+            step = int(GLOBAL_STEPS[17:21])
+            if step > 0:
+                data[step - 1] = array
+                array = []
+            line = file.readline() ########################
+            line = file.readline()
+            continue
+        if line == '******** Prompt ********\n':
+            while line != '******** For Reward ********\n':
+                line = file.readline()
+            # print(line) #******** For Reward ********
+            line = file.readline()
+            tmp = ""
+            while not line.startswith("reward_score"):
+                tmp += line
+                line = file.readline()
+            tmp=tmp[:-1]
+            # print(tmp)
+            array.append(tmp)
+            continue
+        line = file.readline()
+    # for k,v in data.items():
+    #     print(f"[{k}][{len(v)}]")
+    file.close()
+
+    def convert_to_json_array(raw_string):
+        pattern = r"(\[UNUSED_TOKEN_146\]user|\[UNUSED_TOKEN_146\]assistant)(.+?)(?=(\[UNUSED_TOKEN_146\]user|\[UNUSED_TOKEN_146\]assistant|$))"
+        matches = re.findall(pattern, raw_string, re.DOTALL)
+        json_array = []
+        for match in matches:
+            role, content = match[0], match[1].strip()
+            role = role.replace('[UNUSED_TOKEN_146]', '')
+            json_array.append({"role": role, "content": content})
+        return json_array
+
+    new_data={}
+    for k,v in data.items():
+        new_v = []
+        for strs in v:
+            # strs = strs.replace('[UNUSED_TOKEN_146]', '')
+            strs = strs.replace('[UNUSED_TOKEN_145]', '')
+            strs = strs.replace('[UNUSED_TOKEN_130]', '')
+            strs=strs[:-1]
+            json_str=convert_to_json_array(strs)
+            new_v.append(json_str)
+        new_data[k]=new_v
+    return new_data
+
 
 class TxtEnv(object):
     """
@@ -37,20 +98,25 @@ class TxtEnv(object):
         self.clip_reward_max = clip_reward_max
         self.generate_kwargs:dict = generate_kwargs
         self.async_reward:bool = True
+        self.data = get_data("/fs-computility/llm/shared/marl/datasets/tmp/1.8B-baseline-c2kcl5.log.txt")
 
-    def rollout(self, policy_model:BaseModelServer, display=False):
+    def rollout(self, policy_model:BaseModelServer, round_=-1, display=False):
         sample_data = next(self.dataloader)
         ppo_input_messages = []
         pt_input_messages = []
-        for data in sample_data:
-            message = data.message
-            if data.mes_type == "ppo":
-                ppo_input_messages.append(message)
-            elif data.mes_type == "pt":
-                pt_input_messages.append(message)
-            else:
-                raise TypeError(f"Wrong message type {data.mes_type}")
-
+        if round_ == -1:
+            for data in sample_data:
+                message = data.message
+                if data.mes_type == "ppo":
+                    ppo_input_messages.append(message)
+                elif data.mes_type == "pt":
+                    pt_input_messages.append(message)
+                else:
+                    raise TypeError(f"Wrong message type {data.mes_type}")
+        else:
+            for i in range(len(self.data[round_])):
+                ppo_input_messages.append(self.data[round_][i][:-1])
+            print(f"========get {len(self.data[round_])} data from rl3m=============", ppo_input_messages[0])
         # ppo data
         s_t = time.time()
         trajectories = policy_model.generate(
@@ -60,20 +126,19 @@ class TxtEnv(object):
             output_str=True, 
             generate_kwargs=self.generate_kwargs
         )
+        sequences, attention_mask, action_mask = self.process_sequences(trajectories.output_ids, trajectories.input_ids.size(1), self.generate_kwargs['eos_token_id'], self.generate_kwargs['pad_token_id'])
+        trajectories['output_ids'] = sequences
+        trajectories['attention_mask'] = attention_mask
+        trajectories['action_mask'] = action_mask
         logger.info(f"[actor generate] duration: {round(time.time() - s_t, 2)} s, len(inputs): {len(ppo_input_messages)} ")
-        assert trajectories.output_str is not None
-        assert len(trajectories.output_ids.shape) == 2
-        logger.info("[actor generate] trajectories.output_ids:", trajectories.output_ids.shape)
-        assert trajectories.answer_mask.shape == trajectories.output_ids.shape
-        assert trajectories.question_mask.shape == trajectories.output_ids.shape
 
         if self.async_reward:
-            reward_output_ref = self.get_reward_async(ppo_input_messages, trajectories)
+            reward_output_ref = self.get_reward_async(trajectories)
             trajectories["reward_output_ref"] = reward_output_ref
         else:
-            rewards = self.get_reward(ppo_input_messages, trajectories)
-            trajectories["rewards"] = rewards
+            rewards = self.get_reward(trajectories)
             clipped_rewards = torch.clamp(rewards, min=self.clip_reward_min, max=self.clip_reward_max)
+            trajectories["rewards"] = rewards
             trajectories["clipped_rewards"] = clipped_rewards
 
         # pretrain data
@@ -86,17 +151,12 @@ class TxtEnv(object):
     
 
     # default get_reward() is blocking. get_reward_async() needs to call get_reward_collect()
-    def get_reward_async(self, input_messages, policyout):
-        input_messages = deepcopy(input_messages)
-        if self.reward_function is None:
-            print(f"[TxtEnv] No reward funtion, no reward provided.")
-            return None
-        for i in range(len(range(len(policyout.output_ans_str)))):
-            input_messages[i].append({"role": "assistant", "content": policyout.output_ans_str[i]})
+    def get_reward_async(self, policyout):
         s_t = time.time()
         reward_output_ref = self.reward_function.infer_async(
-            input_messages, 
-            output_logprobs=False, 
+            policyout.output_ids,
+            output_logprobs=False,
+            attention_mask=policyout.attention_mask,
             micro_batch_size=self.reward_micro_bs
         )
         logger.info(f"[reward infer] async duration: {round(time.time() - s_t, 2)} s")
@@ -106,26 +166,43 @@ class TxtEnv(object):
         s_t = time.time()
         rm_out = self.reward_function.infer_get(reward_output_ref)
         logger.info(f"[reward infer] async wait duration: {round(time.time() - s_t, 2)} s")
-        rewards = rm_out.logits.cpu().squeeze(-1)
+        rewards = rm_out.logits.squeeze(-1)
         return rewards
 
-    def get_reward(self, input_messages, policyout):
-        input_messages = deepcopy(input_messages)
-        if self.reward_function is None:
-            print(f"[TxtEnv] No reward funtion, no reward provided.")
-            return None
-        for i in range(len(range(len(policyout.output_ans_str)))):
-            input_messages[i].append({"role": "assistant", "content": policyout.output_ans_str[i]})
+    def get_reward(self,policyout):
         s_t = time.time()
         rm_out = self.reward_function.infer(
-            input_messages, 
-            output_logprobs=False, 
+            policyout.output_ids, 
+            output_logprobs=False,
+            attention_mask=policyout.attention_mask,
             micro_batch_size=self.reward_micro_bs
         )
         logger.info(f"[reward infer] duration: {round(time.time() - s_t, 2)} s")
-        rewards = rm_out.logits.cpu().squeeze(-1)
+        rewards = rm_out.logits.squeeze(-1)
         return rewards
     
+    def process_sequences(self, sequences: torch.Tensor, input_len, eos_token_id, pad_token_id):
+        attention_mask = (sequences.ne(eos_token_id) & sequences.ne(pad_token_id)).to(dtype=torch.long)
+        seq_length = attention_mask.size(1)
+
+        # The following code is equivalent to:
+        #
+        # for i in range(attention_mask.size(0)):
+        #     for t in reversed(range(seq_length)):
+        #         if attention_mask[i][t] > 0.5:
+        #             attention_mask[i][min(t + 1, seq_length - 1)] = True
+        #             sequences[i][min(t + 1, seq_length - 1)] = eos_token_id
+        #             break
+        #
+        eos_indices = seq_length - attention_mask.long().fliplr().argmax(dim=1, keepdim=True).clamp(min=1)
+        attention_mask.scatter_(dim=1, index=eos_indices, value=1)
+        sequences.scatter_(dim=1, index=eos_indices, value=eos_token_id)
+
+        # in RL, state_i (current token) + action_i (next token) -> state_i+1 (next token)
+        state_seq = sequences[:, input_len - 1 : -1]
+        # we only calculate the loss of state_i != eos | pad
+        action_mask = state_seq.ne(eos_token_id) & state_seq.ne(pad_token_id)
+        return sequences, attention_mask, action_mask
 
 
 

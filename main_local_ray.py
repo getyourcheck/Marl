@@ -13,6 +13,8 @@ from marl.envs.txt_env import TxtEnv
 from marl.tokenizer.tokenizer_utils import get_tokenizer
 from marl.repeaters.base import BaseRepeater
 from marl.trainer.ppo import PPOTrainer
+import json
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train LLM')
     parser.add_argument('-c','--config', help='config file name or path.', type=str, default='projects/ppo/internlm2/1B/four_model_4gpu.py')
@@ -93,17 +95,17 @@ if __name__ == "__main__":
     step = 1
     while True:
         s_t = time.time()
-        trajectories = txt_env.rollout(policy_model=actor_model)
+        trajectories = txt_env.rollout(policy_model=actor_model,round_=step-1)
         # deal with trajectories
         trajectories = rl_repeater.process(trajectories, policy_model=actor_model, value_model=critic_model, sft_model=None, env=txt_env)
 
         # # for value & policy learn
         value_loss_ref = ppo.value_learn_async(trajectories, critic_model)
 
+        ppo_loss = 0.0
         if pretrain_step <= 0:
             ppo_loss, pt_loss = ppo.policy_learn(trajectories, actor_model)
             logger_train.info(f"[Policy Train] Step: {step}, ppo loss: {ppo_loss}, pretrain loss: {pt_loss}")
-            logger_train.info(f"[Policy Train] Step: {step}, kl: {np.mean(trajectories.kl_distance)}")
         
         value_loss = ppo.value_learn_get(value_loss_ref, critic_model)
         logger_train.info(f"[Value Train] step: {step}, value loss: {value_loss}")
@@ -113,6 +115,19 @@ if __name__ == "__main__":
         if config["rollout_config"].get("write_to_file", True):
             with open(f"{work_dir}/rollout.log", "a") as file:
                 file.write(f"generates: {trajectories.output_str}")
+        summaries = dict(
+            reward_mean=trajectories.rewards.mean().item(),
+            reward_std=trajectories.rewards.std().item(),
+            new_tokens_mean=trajectories.action_mask.sum(-1).float().mean().item(),
+            new_tokens_std=trajectories.action_mask.sum(-1).float().std().item(),
+            kl=trajectories.kl.mean().item(),
+            entropy=trajectories.entropy.mean().item(),
+            step=step,
+            policy_loss=ppo_loss,
+            critic_loss=value_loss,
+        )
+        with open(f"{work_dir}/train.log.jsonl", "a") as f:
+            f.write(json.dumps(summaries) + "\n")
 
         step += 1
         logger_train.info(f"[end to end] duration: {time.time() - s_t} s")

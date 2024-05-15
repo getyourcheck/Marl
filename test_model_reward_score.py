@@ -2,6 +2,7 @@ from marl.config import Config
 from marl.coordinator import Coordinator
 from copy import deepcopy
 import re
+import torch
 
 def get_data(path):
     file = open(path, "r")
@@ -62,6 +63,30 @@ def get_data(path):
         new_data[k]=new_v
     return new_data
 
+def process_sequences(sequences: torch.Tensor, input_len, eos_token_id, pad_token_id):
+    attention_mask = (sequences.ne(eos_token_id) & sequences.ne(pad_token_id)).to(dtype=torch.long)
+    seq_length = attention_mask.size(1)
+
+    # The following code is equivalent to:
+    #
+    # for i in range(attention_mask.size(0)):
+    #     for t in reversed(range(seq_length)):
+    #         if attention_mask[i][t] > 0.5:
+    #             attention_mask[i][min(t + 1, seq_length - 1)] = True
+    #             sequences[i][min(t + 1, seq_length - 1)] = eos_token_id
+    #             break
+    #
+    eos_indices = seq_length - attention_mask.long().fliplr().argmax(dim=1, keepdim=True).clamp(min=1)
+    attention_mask.scatter_(dim=1, index=eos_indices, value=1)
+    sequences.scatter_(dim=1, index=eos_indices, value=eos_token_id)
+
+    # in RL, state_i (current token) + action_i (next token) -> state_i+1 (next token)
+    state_seq = sequences[:, input_len - 1 : -1]
+    # we only calculate the loss of state_i != eos | pad
+    action_mask = state_seq.ne(eos_token_id) & state_seq.ne(pad_token_id)
+    return sequences, attention_mask, action_mask
+
+
 cluster_address="auto"
 configs_path = "projects/ppo/internlm2/1B/actor_reward_8gpu.py"
 config = Config.from_file(configs_path)
@@ -70,7 +95,7 @@ model_dict = coordinator.create_models()
 actor_model = model_dict["actor"]
 reward_model = model_dict["reward"]
 
-data = get_data("/cpfs01/shared/public/llm_model/ckpt/test_zhaohui_0424/1.8B-baseline-c2kcl5.log.txt")
+data = get_data("/fs-computility/llm/shared/marl/datasets/tmp/1.8B-baseline-c2kcl5.log.txt")
 
 prompt=data[0]
 for i in range(len(prompt)):
@@ -94,13 +119,15 @@ trajectories = actor_model.generate(
     micro_batch_size=16,
     generate_kwargs=generate_kwargs
 )
+sequences, attention_mask, action_mask = process_sequences(trajectories.output_ids, trajectories.input_ids.size(1), 92542,0)
 
 input_messages = deepcopy(prompt)
 for i in range(len(range(len(trajectories.output_ans_str)))):
     input_messages[i].append({"role": "assistant", "content": trajectories.output_ans_str[i]})
 
 value_output = reward_model.infer(
-    input_messages, 
+    inputs=sequences,
+    attention_mask=attention_mask,
     output_logprobs=False, 
     micro_batch_size=32,
 )

@@ -8,7 +8,8 @@ from marl.model_backend.hf_model_runner import HfModelRunnerRayActorGroup
 from ..config_consts import *
 from ..tokenizer import tokenizer_utils
 from ..utils import expand_reward_token_id
-
+from marl.model_backend.models.critical_and_reward import get_critic_model,get_reward_model
+from marl.model_backend.models.modeling_internlm2_p import InternLM2ForCausalLM
 
 class BaseModelServer:
     # Initialize
@@ -45,6 +46,11 @@ class BaseModelServer:
         self.tokenizer.pad_token = self.tokenizer.unk_token
         self.tokenizer.padding_side = "left"
         trainer_config["tokenizer_pad_token_id"] = self.tokenizer.pad_token_id
+        trainer_config["model_class"] = InternLM2ForCausalLM
+        if self.model_type == MODEL_TYPE_CRITIC:
+            trainer_config["model_class"] = get_critic_model(model_path ,"v_head")
+        if self.model_type == MODEL_TYPE_REWARD:
+            trainer_config["model_class"] = get_reward_model(model_path ,"v_head")
 
         if self.trainer_type == ENGINE_HUGGINGFACE:
             self.trainer = HfModelRunnerRayActorGroup(
@@ -151,6 +157,10 @@ class BaseModelServer:
                 )
         else:
             input_ids = inputs
+            if self.model_type == MODEL_TYPE_REWARD:
+                input_ids, attention_mask = expand_reward_token_id(
+                    self.reward_token_id, input_ids, attention_mask
+                )
         return self.trainer.infer_async(
             input_ids=input_ids, attention_mask=attention_mask, *args, **infer_kwargs
         )

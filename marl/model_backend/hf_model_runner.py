@@ -31,6 +31,7 @@ from .models.internlm2_reward import (
     InternLM2ForCriticModel,
 )
 
+
 DEFAULT_NEW_TOKENS = 64
 MAXIMUM_NEW_TOKENS = 1024
 
@@ -60,31 +61,14 @@ class HfModelRunner:
         self.model_type = self.model_config.get("model_type", "").lower()
         torch_dtype = self.model_config.get("torch_dtype", "auto")
         use_flash_attn = self.model_config.get("use_flash_attn", None)
-        if self.model_type == MODEL_TYPE_REWARD:
-            # TODO: support reward model from other classes
-            self.model: PreTrainedModel = InternLM2ForRewardModel.from_pretrained(
-                pretrained_model_name_or_path=model_path,
-                device_map="auto",
-                torch_dtype=torch_dtype,
-                trust_remote_code=True,
-                attn_implementation="flash_attention_2" if use_flash_attn else None,
-            )
-        elif self.model_type == MODEL_TYPE_CRITIC:
-            self.model: PreTrainedModel = InternLM2ForCriticModel.from_pretrained(
-                pretrained_model_name_or_path=model_path,
-                device_map="auto",
-                torch_dtype=torch_dtype,
-                trust_remote_code=True,
-                attn_implementation="flash_attention_2" if use_flash_attn else None,
-            )
-        else:
-            self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
-                pretrained_model_name_or_path=model_path,
-                device_map="auto",
-                torch_dtype=torch_dtype,
-                trust_remote_code=True,
-                attn_implementation="flash_attention_2" if use_flash_attn else None,
-            )
+        model_class = self.model_config.get("model_class", AutoModelForCausalLM)
+        self.model: PreTrainedModel = model_class.from_pretrained(
+            pretrained_model_name_or_path=model_path,
+            device_map="auto",
+            torch_dtype=torch_dtype,
+            trust_remote_code=True,
+            attn_implementation="flash_attention_2" if use_flash_attn else None,
+        )
 
         # Graident checkpointing
         gradient_checkpointing = self.model_config.get("gradient_checkpointing", False)
@@ -99,8 +83,6 @@ class HfModelRunner:
         )
         self.tokenizer.pad_token = self.tokenizer.unk_token
         self.tokenizer.padding_side = "left"
-        if self.tokenizer.chat_template is None:
-            raise NotImplementedError("Make sure tokenizer has chat_template.")
 
         # 3. Trainer
         parallel: dict = self.model_config["parallel"]
@@ -179,7 +161,7 @@ class HfModelRunner:
         if isinstance(input_ids, torch.Tensor):  # returns torch.Tensor
             # rarely, since self.train() changes all input_ids to [input_ids]
             loss = self.compute_loss(input_ids, labels, attention_mask, criterion)
-            loss /= gradient_accumulation_steps
+            # loss /= gradient_accumulation_steps
             self.accelerator.backward(loss)
             return loss
 
@@ -202,7 +184,7 @@ class HfModelRunner:
                     loss = self.compute_loss(input_ids[i], labels[i], attention_mask[i], criterion[i])
                 loss_sum += loss * loss_weights[i]
                 loss_list[i] = loss
-            loss_sum /= gradient_accumulation_steps
+            # loss_sum /= gradient_accumulation_steps
             self.accelerator.backward(loss_sum)
             return loss_list
 
@@ -380,16 +362,12 @@ class HfModelRunner:
         if output_hidden_states:
             output["hidden_states"] = model_output["hidden_states"]
         if output_logprobs:
-            logpy = logprobs_from_logits(
+            log_probs = logprobs_from_logits(
                 logits=model_output["logits"][:, :-1, :],
                 labels=input_ids[:, 1:],
                 gather=True,
             )
-            logpy_shift_right_byone = torch.zeros_like(
-                input_ids, dtype=model_output["logits"].dtype
-            )
-            logpy_shift_right_byone[:, 1:] = logpy
-            output["logprobs"] = logpy_shift_right_byone
+            output["logprobs"] = log_probs
         output.to("cpu")
         return output
 
@@ -507,6 +485,7 @@ class HfModelRunner:
             f"generate input_ids shape:[{input_ids.shape}], output_ids shape:[{output_ids.shape}]"
         )
         output = PolicyOutput(output_ids=output_ids)
+        output['input_ids'] = input_ids
         # masks
         output["question_mask"], output["answer_mask"] = get_question_answer_mask(
             input_ids,

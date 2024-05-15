@@ -15,24 +15,28 @@ class CriticLoss(torch.nn.Module):
 
     def critic_loss_fn(self, values, old_values, returns, mask, loss_factor):
         # value loss
-        values_clipped = torch.clamp(
-            values,
-            old_values - self.cliprange_value,
-            old_values + self.cliprange_value,
-        )
-        vf_loss1 = (values - returns) ** 2
-        vf_loss2 = (values_clipped - returns) ** 2
+        # values_clipped = torch.clamp(
+        #     values,
+        #     old_values - self.cliprange_value,
+        #     old_values + self.cliprange_value,
+        # )
+        # vf_loss1 = (values - returns) ** 2
+        # vf_loss2 = (values_clipped - returns) ** 2
+        values_clipped = old_values + (values - old_values).clamp(-self.cliprange_value, self.cliprange_value)
+        vf_loss1 = (values_clipped - returns) ** 2
+        vf_loss2 = (values - returns) ** 2
+
         if self.loss_type == "per_seq":
-            vf_loss = 0.5 * torch.sum(torch.max(vf_loss1, vf_loss2) * mask / mask.sum())
+            vf_loss = (torch.max(vf_loss1, vf_loss2) * mask).sum() / mask.sum()
         elif self.loss_type == "per_token":
-            vf_loss = 0.5 * torch.sum(
+            vf_loss = torch.sum(
                 torch.max(vf_loss1, vf_loss2) * mask * loss_factor
             )
         else:
             raise RuntimeError(
                 f"CriticLoss.loss_type must be ['per_seq', 'per_token'], got {self.loss_type}"
             )
-        return vf_loss
+        return 0.5 * vf_loss.mean()
 
     def forward(self, values: torch.Tensor, labels: dict[str, Any]):
         """Forward function of CriticLoss.
@@ -57,9 +61,11 @@ class CriticLoss(torch.nn.Module):
         """
         assert values.ndim == 2
         mask = labels["mask"]  # (micro_bsz, seqlen)
-        values = values * mask # (micro_bsz, seqlen)
-        old_values = labels["old_values"] * mask  # (micro_bsz, seqlen)
-        returns = labels["returns"] * mask # (micro_bsz, seqlen)
+        num_actions = mask.size(1)
+        values = values[:, -num_actions:]
+
+        old_values = labels["old_values"]  # (micro_bsz, seqlen)
+        returns = labels["returns"]  # (micro_bsz, seqlen)
         loss_factor = labels["loss_factor"]
         # print(values.shape, old_values.shape, returns.shape, mask.shape)
         loss = self.critic_loss_fn(

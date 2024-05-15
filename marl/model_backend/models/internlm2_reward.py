@@ -20,7 +20,7 @@ InternLM2Model = get_class_from_dynamic_module(
     class_reference="internlm/internlm2-chat-1_8b-sft--modeling_internlm2.InternLM2Model",
     pretrained_model_name_or_path="internlm/internlm2-chat-1_8b-sft",
 )
-
+# from .modeling_internlm2 import InternLM2PreTrainedModel, InternLM2Model
 
 class InternLM2ForRewardModel(InternLM2PreTrainedModel):
 
@@ -110,9 +110,11 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
         # make sure that the last token is the reward token
-        assert (
-            input_ids[:, -1].eq(self.reward_token_id).all().item()
-        ), "The last token of input_ids mast be the reward token"
+        eos_indices = attention_mask.size(1) - 1 - attention_mask.long().fliplr().argmax(dim=1, keepdim=True)
+        # print(input_ids.gather(dim=1, index=eos_indices).squeeze(1).cpu(), torch.tensor(self.reward_token_id))
+        # print(input_ids.gather(dim=1, index=eos_indices).squeeze(1).cpu().dtype, torch.tensor(self.reward_token_id).dtype)
+        # assert torch.equal(input_ids.gather(dim=1, index=eos_indices).squeeze(1).cpu(), torch.tensor(self.reward_token_id)), f"The last token of input_ids mast be the reward token, {torch.tensor(self.reward_token_id), input_ids.gather(dim=1, index=eos_indices).squeeze(1).cpu()}"
+        assert torch.all(input_ids.gather(dim=1, index=eos_indices).squeeze(1).cpu() == self.reward_token_id).item(), f"The last token of input_ids mast be the reward token"
 
         # decoder outputs consists of (dec_features, layer_state, dec_hidden, dec_attn)
         outputs = self.model(
@@ -128,9 +130,10 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
         )
 
         hidden_states = outputs[0]
-        reward_scores = self.v_head(hidden_states)
+        values = self.v_head(hidden_states).squeeze(-1)
         # get last token's reward score
-        reward_scores = reward_scores[:, -1].view(-1, 1)
+        # reward_scores = reward_scores[:, -1].view(-1, 1)
+        reward_scores = values.gather(dim=1, index=eos_indices).squeeze(1)
 
         loss = None
 
@@ -281,7 +284,7 @@ class InternLM2ForCriticModel(InternLM2PreTrainedModel):
         )
 
         hidden_states = transformer_outputs[0]
-        logits = self.v_head(hidden_states).squeeze(-1)
+        logits = self.v_head(hidden_states).squeeze(-1)[:, :-1]
 
 
         if input_ids is not None:

@@ -67,7 +67,7 @@ class PPOTrainer(object):
                     "input_ids": trajectories.output_ids[begin:end, :],
                     "policy_logprobs": trajectories.policy_logprobs[begin:end, :],
                     "advs": trajectories.advantages[begin:end, :],
-                    "answer_mask": trajectories.answer_mask[begin:end, :],
+                    "action_mask": trajectories.action_mask[begin:end, :],
                     "attention_mask": trajectories.attention_mask[begin:end, :]
                 }
                 assert len(policy_batch_inputs['input_ids']) == self.policy_minibatch, "[Policy learn] make sure len(policy_batch_inputs) == self.policy_minibatch"
@@ -76,7 +76,7 @@ class PPOTrainer(object):
                 labels = dict(input_ids=policy_batch_inputs["input_ids"],
                             old_logprobs=policy_batch_inputs["policy_logprobs"],
                             advantages=policy_batch_inputs["advs"],
-                            mask=policy_batch_inputs["answer_mask"],
+                            mask=policy_batch_inputs["action_mask"],
                             loss_factor=torch.tensor(loss_factor),
                         )
                 # pretrain data
@@ -147,18 +147,18 @@ class PPOTrainer(object):
         end = begin + self.value_minibatch
         value_batch_inputs = {
             "input_ids": trajectories.output_ids[begin:end, :],
-            "values": trajectories.values_with_last_value[begin:end, :],
+            "old_values": trajectories.old_values[begin:end, :],
             "returns": trajectories.returns[begin:end, :],
-            "answer_mask": trajectories.answer_mask[begin:end, :],
+            "action_mask": trajectories.action_mask[begin:end, :],
             "attention_mask": trajectories.attention_mask[begin:end, :]
         }
         assert len(value_batch_inputs['input_ids']) == self.value_minibatch, "[Value learn] make sure len(value_batch_inputs) == self.value_minibatch"
 
         loss_factor = 1.0
         labels = dict(
-            old_values=value_batch_inputs["values"],
+            old_values=value_batch_inputs["old_values"],
             returns=value_batch_inputs["returns"],
-            mask=value_batch_inputs["answer_mask"],
+            mask=value_batch_inputs["action_mask"],
             loss_factor=torch.tensor(loss_factor),
         )
         return value_batch_inputs, labels

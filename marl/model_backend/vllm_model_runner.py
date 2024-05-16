@@ -52,6 +52,9 @@ class VllmGenerator:
             tensor_parallel_size=tensor_parallel_size,
         )
         self.tokenizer = self.llm.get_tokenizer()
+        self.tokenizer.pad_token = self.tokenizer.unk_token
+        self.tokenizer.pad_token_id = self.tokenizer.unk_token_id
+        self.tokenizer.padding_side = "left"
 
     @staticmethod
     def get_sampling_params_from_dict(generate_kwargs: dict) -> SamplingParams:
@@ -99,13 +102,13 @@ class VllmGenerator:
             if len(inputs.shape) == 2:  # e.g., [batch_size, seq_len]
                 prompt = self.tokenizer.batch_decode(
                     inputs,
-                    skip_special_tokens=True,
+                    skip_special_tokens=False,
                     clean_up_tokenization_spaces=False,
                 )
             elif len(inputs.shape) == 1:  # e.g., [seq_len]
                 prompt = self.tokenizer.decode(
                     inputs,
-                    skip_special_tokens=True,
+                    skip_special_tokens=False,
                     clean_up_tokenization_spaces=False,
                 )
             else:
@@ -115,8 +118,8 @@ class VllmGenerator:
         elif isinstance(inputs, str):
             prompt = inputs  # str
         elif isinstance(inputs, list):
-            if isinstance(inputs[0], str):
-                prompt = inputs  # list[str]
+            if isinstance(inputs[0], list):
+                prompt = inputs  # list[int]
             else:
                 raise ValueError(f"Unsupported inputs[0] with type({type(inputs[0])})")
             # TODO: support list[dict] input, e.g., [{"role": "user", "content": prompt}]
@@ -124,21 +127,43 @@ class VllmGenerator:
             raise ValueError(f"Unsupported inputs with type({type(inputs)})")
 
         # Calling vllm's generate
-        req_outputs = self.llm.generate(prompt, sampling_params=sp)
+        req_outputs = self.llm.generate(prompt_token_ids=prompt, sampling_params=sp)
+
+        def get_longest_list_length(list_of_lists):
+            max_length = 0
+            for int_list in list_of_lists:
+                current_length = len(int_list)
+                if current_length > max_length:
+                    max_length = current_length
+            return max_length
+        
+        _max_length = get_longest_list_length(prompt)
+
+        def pad_list_with_zeros(int_list, max_length, pad_token_id):
+            if len(int_list) < max_length:
+                num_zeros_to_add = max_length - len(int_list)
+                padded_list = [pad_token_id] * num_zeros_to_add + int_list
+                return padded_list
+            else:
+                return int_list
 
         policy_outputs = []
-        for req_output in req_outputs:
+        for _, req_output in enumerate(req_outputs):
             output = PolicyOutput()
-            input_ids = req_output.prompt_token_ids
-            output_ids = input_ids + req_output.outputs[0].token_ids  # concat
+            input_ids = [item for item in req_output.prompt_token_ids]
+            input_ids = pad_list_with_zeros(input_ids, _max_length, generate_kwargs.get("pad_token_id"))
+            output_token_ids = [item for item in req_output.outputs[0].token_ids]
+            output_ids = input_ids + output_token_ids  # concat
+            output["input_ids"] = torch.Tensor(input_ids).to(torch.long).unsqueeze(0)
+            output["output_ids"] = torch.tensor(output_ids).to(torch.long).unsqueeze(0)
+
             output["question_mask"], output["answer_mask"] = get_question_answer_mask(
-                torch.Tensor(input_ids).reshape(1, -1),  # [batch_size=1, max_seq_len]
-                torch.Tensor(output_ids).reshape(1, -1),
+                output["input_ids"],
+                output["output_ids"],
                 tokenizer_pad_token_id=self.tokenizer.pad_token_id,
                 generate_pad_token_id=generate_kwargs.get("pad_token_id"),
             )
             output["attention_mask"] = output.question_mask + output.answer_mask  # OR
-            output["output_ids"] = torch.tensor(output_ids).unsqueeze(0)
             if output_logits:
                 raise NotImplementedError("TODO: output_logits")  # TODO
             if output_attentions:
@@ -147,7 +172,6 @@ class VllmGenerator:
                 raise NotImplementedError("TODO: output_hidden_states")  # TODO
             if output_str:  # return list[str]
                 output["output_ans_str"] = [req_output.outputs[0].text]
-                output["output_str"] = [req_output.prompt + req_output.outputs[0].text]
             output.to("cpu")
 
             policy_outputs.append(output)

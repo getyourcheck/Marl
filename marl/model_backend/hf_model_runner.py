@@ -24,7 +24,7 @@ from .generate_utils import (
 from ..config_consts import *
 from ..policy_output import PolicyOutput, logprobs_from_logits
 from ..tokenizer import tokenizer_utils
-from ..utils import set_seed, expand_reward_token_id
+from ..utils import set_seed
 from .dist_utils import init_process_group
 from .models.internlm2_reward import (
     InternLM2ForRewardModel,
@@ -389,10 +389,6 @@ class HfModelRunner:
         self.info_rank0(f"[{self.model_type}] self.infer() kwargs: {infer_kwargs}")
         if not isinstance(inputs, torch.Tensor):
             input_ids, attention_mask = tokenizer_utils.encode(inputs, self.tokenizer)
-            if self.model_type == MODEL_TYPE_REWARD:
-                input_ids, attention_mask = expand_reward_token_id(
-                    self.model.reward_token_id, input_ids, attention_mask, pad_token_id=self.tokenizer.pad_token_id
-                )
         else:
             input_ids = inputs
 

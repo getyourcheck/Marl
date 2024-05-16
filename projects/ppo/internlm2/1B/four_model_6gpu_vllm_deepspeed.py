@@ -1,6 +1,7 @@
 import torch
 
 rollout_config = dict(
+    write_to_file=False,
     actor_micro_bs=32,
     reward_micro_bs=32,
     clip_reward_min=-1.5,

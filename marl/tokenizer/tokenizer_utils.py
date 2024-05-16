@@ -70,6 +70,8 @@ def get_tokenizer(
 def encode(
     inputs: Union[list[str], list[list[dict]]],
     tokenizer,
+    return_tensors="pt",
+    padding=True,
     add_generation_prompt: bool = False,
 ):
     if isinstance(inputs[0], list):
@@ -79,9 +81,9 @@ def encode(
                 input,
                 tokenize=False,
                 add_generation_prompt=add_generation_prompt,
-                return_tensors="pt",
+                return_tensors=return_tensors,
             )
             for input in inputs
         ]
-    output = tokenizer(inputs, return_tensors="pt", padding=True, add_special_tokens=False)
+    output = tokenizer(inputs, return_tensors=return_tensors, padding=padding, add_special_tokens=False)
     return output.input_ids, output.attention_mask

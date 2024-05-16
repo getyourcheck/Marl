@@ -133,7 +133,7 @@ class InternLM2ForRewardModel(InternLM2PreTrainedModel):
         values = self.v_head(hidden_states).squeeze(-1)
         # get last token's reward score
         # reward_scores = reward_scores[:, -1].view(-1, 1)
-        reward_scores = values.gather(dim=1, index=eos_indices).squeeze(1)
+        reward_scores = values.gather(dim=1, index=eos_indices.to(values.device)).squeeze(1)
 
         loss = None
 

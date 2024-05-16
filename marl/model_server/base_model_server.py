@@ -151,16 +151,12 @@ class BaseModelServer:
     def infer_async(self, inputs, attention_mask=None, *args, **infer_kwargs):
         if not isinstance(inputs, torch.Tensor):
             input_ids, attention_mask = tokenizer_utils.encode(inputs, self.tokenizer)
-            if self.model_type == MODEL_TYPE_REWARD:
-                input_ids, attention_mask = expand_reward_token_id(
-                    self.reward_token_id, input_ids, attention_mask
-                )
         else:
             input_ids = inputs
-            if self.model_type == MODEL_TYPE_REWARD:
-                input_ids, attention_mask = expand_reward_token_id(
-                    self.reward_token_id, input_ids, attention_mask
-                )
+        if self.model_type == MODEL_TYPE_REWARD:
+            input_ids, attention_mask = expand_reward_token_id(
+                self.reward_token_id, input_ids, attention_mask
+            )
         return self.trainer.infer_async(
             input_ids=input_ids, attention_mask=attention_mask, *args, **infer_kwargs
         )
@@ -177,9 +173,14 @@ class BaseModelServer:
         if isinstance(inputs, torch.Tensor):
             input_ids = inputs
         elif isinstance(inputs, list):
-            input_ids, attention_mask = tokenizer_utils.encode(
-                inputs, self.tokenizer, add_generation_prompt=True
-            )
+            if not self.generator_eq_trainer:
+                input_ids, attention_mask = tokenizer_utils.encode(
+                    inputs, self.tokenizer, return_tensors=None, padding=False, add_generation_prompt=True
+                )
+            else:
+                input_ids, attention_mask = tokenizer_utils.encode(
+                    inputs, self.tokenizer, add_generation_prompt=True
+                )
         else:
             raise NotImplementedError(f"unknown inputs: {inputs}")
 

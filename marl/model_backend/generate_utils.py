@@ -31,7 +31,7 @@ def get_question_answer_mask(
 
 
 def partition_by_micro_batch_size(
-    input_ids: Union[list[str], torch.Tensor],
+    input_ids: Union[list[str], torch.Tensor, list[int]],
     micro_batch_size: int,
     attention_mask: torch.Tensor = None,
     labels: Optional[

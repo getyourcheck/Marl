@@ -44,9 +44,9 @@ class PolicyOutput(ModelOutput):
         return True
 
     def to(self, device):
-        for _, v in self.items():
+        for k, v in self.items():
             if isinstance(v, torch.Tensor):
-                v.to(device)
+                self[k]=v.to(device)
 
     def get_tensor_keys(self):
         keys = []

@@ -12,6 +12,8 @@ from .base import MultiSourceDatset, InfiniteDataset
 @dataclass
 class Message:
     message: List[dict]
+    sys_meta: str = "default"
+    rm_meta: str = "default"
     token_ids: List[int] = None
     mes_type: str = "ppo"
 
@@ -127,10 +129,15 @@ class TxtMessageDataset(IterableDataset):
 
             ppo_batch_messages = []
             for task in self.ppo_message_dataset._task_group:
+                messages = []
                 if self.is_valid:
-                    messages = [ex for ex in task["dataset"]]
+                    # messages = [ex for ex in task["dataset"]]
+                    pass
                 else:
-                    messages = [next(task["iterator"]) for _ in range(task["target_num_each_epoch"])]
+                    for _ in range(task["target_num_each_epoch"]):
+                        messages.append({"data": next(task["iterator"]),
+                                         "sys_meta": task['sys_meta'],
+                                         'rm_meta': task['rm_meta']})
                 print(f"[PPO] prepare {len(messages)} data from {task['filepath']}")
                 epoch_rng.shuffle(messages)
                 ppo_batch_messages.extend(messages)
@@ -153,26 +160,29 @@ class TxtMessageDataset(IterableDataset):
     def _postprocess_sequence(self, message):
         """Post process sequence: tokenization & truncation."""
         mes_type = "ppo"
-        if message[-1]["role"] == "assistant":
-            if message[-1]["content"] != '':
-                token_ids = self.tokenizer.apply_chat_template(message, tokenize=True, add_generation_prompt=False, return_tensors="pt")
+        message_data = message['data']
+        if message_data[-1]["role"] == "assistant":
+            if message_data[-1]["content"] != '':
+                token_ids = self.tokenizer.apply_chat_template(message_data, tokenize=True, add_generation_prompt=False, return_tensors="pt")
                 mes_type = "pt"
             else:
-                message = message[:-1]
-                token_ids = self.tokenizer.apply_chat_template(message, tokenize=True, add_generation_prompt=True, return_tensors="pt")
+                message_data = message_data[:-1]
+                token_ids = self.tokenizer.apply_chat_template(message_data, tokenize=True, add_generation_prompt=True, return_tensors="pt")
         else:
-            token_ids = self.tokenizer.apply_chat_template(message, tokenize=True, add_generation_prompt=True, return_tensors="pt")
+            token_ids = self.tokenizer.apply_chat_template(message_data, tokenize=True, add_generation_prompt=True, return_tensors="pt")
         if token_ids.shape[-1] <= 4:
             return None
 
         # assert token_ids.shape[-1] <= self.max_seq_len, "{}-{}".format(token_ids.shape[-1], self.max_seq_len)
         if token_ids.shape[-1] > self.max_seq_len:
-            # TODO truncation
+            # TODO truncation??
             # raise RuntimeError(f"token_ids is too long: {token_ids.shape[-1]}")
             # print(f"[TXT Loader] Warning, {mes_type} message {message} is too long, skipped...")
             return None
-        return Message(message=message,
+        return Message(message=message_data,
                        token_ids=token_ids,
+                       sys_meta=message['sys_meta'],
+                       rm_meta=message['rm_meta'],
                        mes_type=mes_type)
 
 
@@ -184,54 +194,16 @@ if __name__ == "__main__":
     from transformers import AutoTokenizer
 
     """ppo reader test here"""
-    model_path = "internlm/internlm2-chat-1_8b-sft"
+    model_path = "/cpfs01/shared/public/public_hdd/lishuaibin/models/1.8B_baseline/sft/Luyou_1B_FT_0.19_130_avg5/"
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     dataset_config = {
-        "ppo_datas": ["/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/0801-train.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/ANLI-0904-train.json::0.1",
+        "ppo_datas": ["/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/0801-train.json::0.1[META]:summarization[REWARD_META]:cn-safety",
+                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/ANLI-0904-train.json::0.1[META]:summarization",
                         "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/COIG-0906-train.json::0.1",
                         "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/SFT6W-prompts-train.json::0.1",
                         "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/data_reflow_2w.json::0.1",
                         "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/gaokao_essay_prompt.json::0.1",
                         "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/gsm8k_ci.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/gsm8k_sample200_prompt_only.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/haochen_data.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/identity_200_sft_for_ppo_prompt_only.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/indomain_writing_2k.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/lingdaoren_adv_4963_20230913-train-rd.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/lmsys-chat-english-chat-format-100char-1t.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/math_ci.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/maxmin_sample200_prompt_only.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/non_toxic_single_turn_tie_both_bad-train.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/non_toxic_single_turn_tie_both_good-train.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_15-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_16-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_17-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_18-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_19-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_20-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_21-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_22-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_23-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_24-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_25-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/out_instinwild_cn_origin_26-rd.json::0.01",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/prm800k_ppo_prompt_1212.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/puyu_chat_format_v2-train.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/retrieval_refined_bench_no_alpaca.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/reward_patch_20240103_prompt_only.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/shezheng_52230_20230905_prompts-train-rd.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/shezheng_adv_7549_20230913-train-rd.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/split_0_prompt-refined.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/split_0_prompt.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/split_1_prompt.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/split_2_prompt.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/subeval_writing_prompt_only_v2.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/toxic_single_turn-train.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/yuqing_5817_20230831_prompts-train-rd.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/yuqing_adv_5817_20230913-train-rd.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/zephyr-ultrachat-200k_ppo_train_1t.json::0.1",
-                        "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/messages_data/zhihu_177k_outline_to_artical-with-sys.json::0.1",
                       ],
         "pt_datas": ["./data/pt_data/pt_data_0.json::0.9",
                      "./data/pt_data/pt_data_1.json::0.3",
@@ -247,7 +219,7 @@ if __name__ == "__main__":
     txt_iter = TxtMessageDataset(**dataset_config)
 
     for data in txt_iter:
-        types = [d.mes_type for d in data]
+        types = [d for d in data]
         print(types)
         time.sleep(2)
 

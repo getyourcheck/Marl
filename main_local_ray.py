@@ -95,7 +95,7 @@ if __name__ == "__main__":
     step = 1
     while True:
         s_t = time.time()
-        trajectories = txt_env.rollout(policy_model=actor_model,round_=step-1)
+        trajectories = txt_env.rollout(policy_model=actor_model)
         # deal with trajectories
         trajectories = rl_repeater.process(trajectories, policy_model=actor_model, value_model=critic_model, sft_model=None, env=txt_env)
 

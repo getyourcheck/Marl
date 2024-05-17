@@ -59,9 +59,17 @@ class MultiSourceDatset(IterableDataset):
     def __init__(self, task_groups, sub_dataset_type="file", random_seed=1024):
         self._task_group = []
         for _task in task_groups:
-            file_path, prob = _task.split("::")[0], float(_task.split("::")[1])
+            file_path, extra_info = _task.split("::")[0], _task.split("::")[1]
+            prob = float(extra_info.split("[")[0])
+            sys_meta = "default"
+            rm_meta = "default"
+            if '[META]:' in extra_info:
+                sys_meta = extra_info.split("[META]:")[-1].split("[")[0]
+            if "[REWARD_META]:" in extra_info:
+                rm_meta = extra_info.split("[REWARD_META]:")[-1].split("[")[0]
             if prob > 0:
-                self._task_group.append({'prob': prob, 'filepath': file_path})
+                self._task_group.append({'prob': prob, 'filepath': file_path, "sys_meta": sys_meta, "rm_meta": rm_meta})
+                print(f"[DataLoader] Load {_task} with prob:{prob}, sys_meta type: {sys_meta}, reward meta: {rm_meta}")
             else:
                 print(f"[DataLoader] Warning skip file, prob of {file_path} is {prob} ...")
         assert len(self._task_group) > 0, "No data to be trained"
@@ -93,7 +101,9 @@ class MultiSourceDatset(IterableDataset):
 
 if __name__ == "__main__":
     dataset_config = {
-        "task_groups": ["./data/ppo_data/ppo_data_0.json::0.9",
+        "task_groups": ["./data/ppo_data/ppo_data_1.json::0.1[META]:summarization[REWARD_META]:cn-safety",
+                        "./data/ppo_data/ppo_data_0.json::0.9[META]:summarization",
+                        "./data/ppo_data/ppo_data_1.json::0.1[REWARD_META]:cn-safety",
                         "./data/ppo_data/ppo_data_1.json::0.1",
                         "./data/ppo_data/ppo_data_1.json::0.0",
                         ],

@@ -485,7 +485,6 @@ class HfModelRunner:
             f"generate input_ids shape:[{input_ids.shape}], output_ids shape:[{output_ids.shape}]"
         )
         output = PolicyOutput(output_ids=output_ids)
-        output['input_ids'] = input_ids
         # masks
         output["question_mask"], output["answer_mask"] = get_question_answer_mask(
             input_ids,
@@ -494,6 +493,7 @@ class HfModelRunner:
             generate_pad_token_id=generate_kwargs.get("pad_token_id"),
         )
         output["attention_mask"] = output.question_mask + output.answer_mask
+        output["action_mask"] = output_attentions[:, input_ids.size(1) - 1 : -1]
 
         if output_logits:
             output["logits"] = model_output["logits"]  # tuple(torch.Tensor, )

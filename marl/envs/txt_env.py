@@ -109,10 +109,6 @@ class TxtEnv(object):
             output_str=True, 
             generate_kwargs=self.generate_kwargs
         )
-        sequences, attention_mask, action_mask = self.process_sequences(trajectories.output_ids, trajectories.input_ids.size(1), self.generate_kwargs['eos_token_id'], self.generate_kwargs['pad_token_id'])
-        trajectories['output_ids'] = sequences
-        trajectories['attention_mask'] = attention_mask
-        trajectories['action_mask'] = action_mask
         logger.info(f"[actor generate] duration: {round(time.time() - s_t, 2)} s, len(inputs): {len(ppo_input_messages)} ")
 
         if self.async_reward:
@@ -179,30 +175,6 @@ class TxtEnv(object):
         logger.info(f"[reward infer] duration: {round(time.time() - s_t, 2)} s")
         rewards = rm_out.logits.squeeze(-1)
         return rewards
-    
-    def process_sequences(self, sequences: torch.Tensor, input_len, eos_token_id, pad_token_id):
-        attention_mask = (sequences.ne(eos_token_id) & sequences.ne(pad_token_id)).to(dtype=torch.long)
-        seq_length = attention_mask.size(1)
-
-        # The following code is equivalent to:
-        #
-        # for i in range(attention_mask.size(0)):
-        #     for t in reversed(range(seq_length)):
-        #         if attention_mask[i][t] > 0.5:
-        #             attention_mask[i][min(t + 1, seq_length - 1)] = True
-        #             sequences[i][min(t + 1, seq_length - 1)] = eos_token_id
-        #             break
-        #
-        eos_indices = seq_length - attention_mask.long().fliplr().argmax(dim=1, keepdim=True).clamp(min=1)
-        attention_mask.scatter_(dim=1, index=eos_indices, value=1)
-        sequences.scatter_(dim=1, index=eos_indices, value=eos_token_id)
-
-        # in RL, state_i (current token) + action_i (next token) -> state_i+1 (next token)
-        state_seq = sequences[:, input_len - 1 : -1]
-        # we only calculate the loss of state_i != eos | pad
-        action_mask = state_seq.ne(eos_token_id) & state_seq.ne(pad_token_id)
-        return sequences, attention_mask, action_mask
-
 
 
 if __name__ == "__main__":

@@ -164,7 +164,7 @@ class VllmGenerator:
                 generate_pad_token_id=generate_kwargs.get("pad_token_id"),
             )
             output["attention_mask"] = output.question_mask + output.answer_mask  # OR
-            output["action_mask"] = output["attention_mask"][:, input_ids.size(1) - 1 : -1]
+            output["action_mask"] = output["attention_mask"][:, _max_length - 1 : -1]
             if output_logits:
                 raise NotImplementedError("TODO: output_logits")  # TODO
             if output_attentions:

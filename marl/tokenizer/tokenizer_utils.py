@@ -64,6 +64,8 @@ def get_tokenizer(
             "Using a slow tokenizer. This might cause a significant "
             "slowdown. Consider using a fast tokenizer instead."
         )
+    for key, value in kwargs.items():
+        setattr(tokenizer, key, value)
     return tokenizer
 
 

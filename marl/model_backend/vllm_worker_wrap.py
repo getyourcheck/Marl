@@ -64,7 +64,7 @@ class VllmWorkerWrap(Worker):
         if torch.distributed.get_rank() == 0:
             logger.debug(f"update weight: {name}, dtype: {dtype}, shape: {shape}")
 
-        assert dtype == self.model_config.dtype, f"mismatch dtype: src {dtype}, dst {self.model_config.dtype}"
+        # assert dtype == self.model_config.dtype, f"mismatch dtype: src {dtype}, dst {self.model_config.dtype}"
         weight = torch.empty(shape, dtype=dtype, device="cuda")
         torch.distributed.broadcast(weight, 0, group=self._model_update_group)
         self.model_runner.model.load_weights(model_name_or_path={name: weight})

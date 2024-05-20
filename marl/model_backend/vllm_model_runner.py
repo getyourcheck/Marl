@@ -52,9 +52,9 @@ class VllmGenerator:
             tensor_parallel_size=tensor_parallel_size,
         )
         self.tokenizer = self.llm.get_tokenizer()
-        self.tokenizer.pad_token = self.tokenizer.unk_token
-        self.tokenizer.pad_token_id = self.tokenizer.unk_token_id
-        self.tokenizer.padding_side = "left"
+        tokenizer_config = self.model_config.get("tokenizer_config",{})
+        for key, value in tokenizer_config.items():
+            setattr(self.tokenizer, key, value)
 
     @staticmethod
     def get_sampling_params_from_dict(generate_kwargs: dict) -> SamplingParams:
@@ -139,10 +139,10 @@ class VllmGenerator:
         
         _max_length = get_longest_list_length(prompt)
 
-        def pad_list_with_zeros(int_list, max_length, pad_token_id):
+        def pad_list_with_pad_token(int_list, max_length, pad_token_id):
             if len(int_list) < max_length:
-                num_zeros_to_add = max_length - len(int_list)
-                padded_list = [pad_token_id] * num_zeros_to_add + int_list
+                num_pad_token_to_add = max_length - len(int_list)
+                padded_list = [pad_token_id] * num_pad_token_to_add + int_list
                 return padded_list
             else:
                 return int_list
@@ -151,7 +151,7 @@ class VllmGenerator:
         for _, req_output in enumerate(req_outputs):
             output = PolicyOutput()
             input_ids = [item for item in req_output.prompt_token_ids]
-            input_ids = pad_list_with_zeros(input_ids, _max_length, generate_kwargs.get("pad_token_id"))
+            input_ids = pad_list_with_pad_token(input_ids, _max_length, self.tokenizer.pad_token_id)
             output_token_ids = [item for item in req_output.outputs[0].token_ids]
             output_ids = input_ids + output_token_ids  # concat
             output["input_ids"] = torch.Tensor(input_ids).to(torch.long).unsqueeze(0)
@@ -226,7 +226,7 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
         self.config = config
         self.tp_size = get_tp_size(config)  # tensor parallelism
         self.dp_size = get_dp_size(config)  # num of vllm_engines
-        self.tokenizer_pad_token_id = config.get("tokenizer_pad_token_id", 0)
+        self.tokenizer_pad_token_id = config.tokenizer_config.pad_token_id
 
         self.ray_actors: list[VllmGeneratorRayActor] = []  # i.e., vllm_engines
         for dp_i in range(self.dp_size):
@@ -297,7 +297,7 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
 
     def generate_get(self, object_refs, timeout=None):
         outputs = ray.get(object_refs, timeout=timeout)
-        padding_token_map = {"output_ids": self.tokenizer_pad_token_id}
+        padding_token_map = {"output_ids": self.config.tokenizer_config.pad_token_id}
         return concat_policy_outputs(outputs, padding_token_map)
 
     def generate(self, *args, **kwargs):

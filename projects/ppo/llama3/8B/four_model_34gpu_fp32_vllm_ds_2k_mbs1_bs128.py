@@ -13,9 +13,11 @@ DP_SIZE=8
 GRADIENT_ACC_STEP=DATA_BATCH_SIZE // DP_SIZE // TRAIN_MICRO_BATCH_SIZE
 
 tokenizer_config = dict(
-    pad_token_id = 0,
-    eos_token_id = 92542,
+    pad_token_id = 2,
+    eos_token_id = 128001,
+    bos_token_id = 128000,
     padding_side = 'left',
+    chat_template = "{{ bos_token }}{%- if messages[0]['role'] == 'system' -%}{% set loop_messages = messages[1:] %}{%- else -%}{% set loop_messages = messages %}{% endif %}System: This is a chat between a user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions based on the context. The assistant should also indicate when the answer cannot be found in the context.\n\n{% for message in loop_messages %}{%- if message['role'] == 'user' -%}User: {{ message['content'].strip() + '\n\n' }}{%- else -%}Assistant: {{ message['content'].strip() + '\n\n' }}{%- endif %}{% if loop.last and message['role'] == 'user' %}Assistant:{% endif %}{% endfor %}",
 )
 
 rollout_config = dict(
@@ -25,16 +27,16 @@ rollout_config = dict(
     clip_reward_max=5,
     max_new_tokens=MAX_ANSWER_LEN,
     generate_kwargs={
-        "do_sample": True,
-        "temperature": 1.0,
+        "do_sample":True,
+        "temperature":1.0,
         "top_k": 0,
         "top_p": 0.9,
-        "min_new_tokens": 1,
-        "num_beams": 1,
+        "pad_token_id": 2,
+        "eos_token_id": 2,
         "early_stopping": True,
-        "eos_token_id": 92542,
-        "pad_token_id": 0,
-    },
+        "num_beams":1,
+        "min_new_tokens":1,
+    }
 )
 
 repeater_config = dict(
@@ -47,7 +49,7 @@ repeater_config = dict(
     kl_coeff = 0.01,
     gamma = 1.0,
     gae_lambda = 0.99,
-    answer_end_id = 92542,
+    answer_end_id = 2,
     norm_rewards = True,
 )
 
@@ -57,16 +59,16 @@ train_config = dict(
     actor_micro_bs=TRAIN_MICRO_BATCH_SIZE,
     critic_micro_bs=TRAIN_MICRO_BATCH_SIZE,
     pretrain_step=20,
-    save_interval=80,
+    save_interval=200,
 )
 
 model_configs = dict(
     actor=dict(
-        model_path="internlm/internlm2-chat-7b-sft",
+        model_path="nvidia/Llama3-ChatQA-1.5-8B",
         model_type="actor",
         trainer_config=dict(
-            torch_dtype=torch.float32,
             trainer_type="huggingface",
+            torch_dtype="auto",
             train_kwargs=dict(
                 micro_bsz=1,
                 lr=1e-6,
@@ -82,7 +84,7 @@ model_configs = dict(
             ),
             deepspeed_config={
                 "zero_optimization": {
-                    "stage": ZERO_STAGE, 
+                    "stage": 2, 
                     "offload_param": {
                         "device": "none"
                     },
@@ -100,9 +102,10 @@ model_configs = dict(
                 "data_types": {
                     "grad_accum_dtype": "fp32"
                 }, 
-                "gradient_accumulation_steps": GRADIENT_ACC_STEP,
-                "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,
-            },
+                "train_micro_batch_size_per_gpu": 1, 
+                "gradient_accumulation_steps": 16,
+                "train_batch_size": DATA_BATCH_SIZE
+            }
         ),
         generator_config=dict(
             shared_with_trainer=False,
@@ -116,11 +119,11 @@ model_configs = dict(
         ),
     ),
     reference=dict(
-        model_path="internlm/internlm2-chat-7b-sft",
+        model_path="nvidia/Llama3-ChatQA-1.5-8B",
         model_type="reference",
         trainer_config=dict(
-            torch_dtype=torch.float32,
             trainer_type="huggingface",
+            torch_dtype="auto",
             parallel=dict(
                 data=dict(size=DP_SIZE, mode="deepspeed"),
                 tensor=dict(size=1, mode="1d"),
@@ -129,7 +132,7 @@ model_configs = dict(
             ),
             deepspeed_config={
                 "zero_optimization": {
-                    "stage": ZERO_STAGE, 
+                    "stage": 2, 
                     "offload_param": {
                         "device": "none"
                     },
@@ -147,14 +150,16 @@ model_configs = dict(
                 "data_types": {
                     "grad_accum_dtype": "fp32"
                 }, 
-                "gradient_accumulation_steps": GRADIENT_ACC_STEP,
-                "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,
-            },
+                "train_micro_batch_size_per_gpu": 1, 
+                "gradient_accumulation_steps": 16,
+                "train_batch_size": DATA_BATCH_SIZE
+            }
         ),
     ),
     critic=dict(
-        model_path="/fs-computility/llm/shared/marl/models/internlm2/7B/hf/R-Ampere-7B-8k-D20240126-v1_hf/",
+        model_path="sfairXC/FsfairX-LLaMA3-RM-v0.1",
         model_type="critic",
+        head_name="score",
         trainer_config=dict(
             torch_dtype="auto",
             trainer_type="huggingface",
@@ -173,7 +178,7 @@ model_configs = dict(
             ),
             deepspeed_config={
                 "zero_optimization": {
-                    "stage": ZERO_STAGE, 
+                    "stage": 2, 
                     "offload_param": {
                         "device": "none"
                     },
@@ -191,17 +196,19 @@ model_configs = dict(
                 "data_types": {
                     "grad_accum_dtype": "fp32"
                 }, 
-                "gradient_accumulation_steps": GRADIENT_ACC_STEP,
-                "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,
-            },
+                "train_micro_batch_size_per_gpu": 1, 
+                "gradient_accumulation_steps": 16,
+                "train_batch_size": DATA_BATCH_SIZE
+            }
         ),
     ),
     reward=dict(
-        model_path="/fs-computility/llm/shared/marl/models/internlm2/7B/hf/R-Ampere-7B-8k-D20240126-v1_hf/",
+        model_path="sfairXC/FsfairX-LLaMA3-RM-v0.1",
         model_type="reward",
+        head_name="score",
         trainer_config=dict(
-            torch_dtype="auto",
             trainer_type="huggingface",
+            torch_dtype="auto",
             parallel=dict(
                 data=dict(size=DP_SIZE, mode="deepspeed"),
                 tensor=dict(size=1, mode="1d"),
@@ -210,7 +217,7 @@ model_configs = dict(
             ),
             deepspeed_config={
                 "zero_optimization": {
-                    "stage": ZERO_STAGE, 
+                    "stage": 2, 
                     "offload_param": {
                         "device": "none"
                     },
@@ -228,9 +235,10 @@ model_configs = dict(
                 "data_types": {
                     "grad_accum_dtype": "fp32"
                 }, 
-                "gradient_accumulation_steps": GRADIENT_ACC_STEP,
-                "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,
-            },
+                "train_micro_batch_size_per_gpu": 1, 
+                "gradient_accumulation_steps": 16,
+                "train_batch_size": DATA_BATCH_SIZE
+            }
         ),
     ),
 )

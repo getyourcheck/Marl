@@ -17,6 +17,12 @@ CRITIC_GRADIENT_ACC_STEP=DATA_BATCH_SIZE // CRITIC_DP_SIZE // TRAIN_MICRO_BATCH_
 
 MODEL_DTYPE="auto"
 
+tokenizer_config = dict(
+    pad_token_id = 0,
+    eos_token_id = 92542,
+    padding_side = 'left',
+)
+
 rollout_config = dict(
     actor_micro_bs=GENERATE_MICRO_BATCH_SIZE,
     reward_micro_bs=GENERATE_MICRO_BATCH_SIZE,

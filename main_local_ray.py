@@ -49,9 +49,10 @@ if __name__ == "__main__":
 
     #init dataset
     model_path = config["model_configs"]["actor"]["model_path"]
-    tokenizer = get_tokenizer(model_path, trust_remote_code=True)
-    tokenizer.pad_token = tokenizer.unk_token
-    tokenizer.padding_side = "left"
+    tokenizer_config = config.get("tokenizer_config",{})
+    for model_type in config["model_configs"].keys():
+        config["model_configs"][model_type]["tokenizer_config"] = tokenizer_config
+    tokenizer = get_tokenizer(model_path, trust_remote_code=True,**tokenizer_config)
     dataset_config = config["dataset_config"]
     dataset_config["tokenizer"] = tokenizer
     txt_loader = TxtMessageDataset(**dataset_config)

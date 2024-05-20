@@ -50,7 +50,6 @@ class TxtMessageDataset(IterableDataset):
             self.ppo_data_per_epoch = num_samples_each_epoch
 
         self.tokenizer = tokenizer
-        self.tokenizer.pad_token = self.tokenizer.unk_token
         assert self.tokenizer.chat_template is not None, "Make sure tokenizer has chat_template."
 
         self.max_seq_len = max_seq_len

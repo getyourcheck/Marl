@@ -78,11 +78,10 @@ class HfModelRunner:
 
         # 2. Tokenizer
         tokenizer_path = self.model_config.get("tokenizer_path", model_path)
+        tokenizer_config=  self.model_config.get("tokenizer_config", {})
         self.tokenizer = tokenizer_utils.get_tokenizer(
-            tokenizer_path, trust_remote_code=True
+            tokenizer_path, trust_remote_code=True, **tokenizer_config
         )
-        self.tokenizer.pad_token = self.tokenizer.unk_token
-        self.tokenizer.padding_side = "left"
 
         # 3. Trainer
         parallel: dict = self.model_config["parallel"]
@@ -707,7 +706,7 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
         self.released = True
         num_gpus = get_gpu_requirement(config)
         self.dp_size = get_dp_size(config)
-        self.tokenizer_pad_token_id = config.get("tokenizer_pad_token_id", 0)
+        self.tokenizer_pad_token_id = config.tokenizer_config.pad_token_id
         bundles = [
             {"CPU": DEFAULT_NUM_CPUS, "GPU": DEFAULT_NUM_GPUS} for _ in range(num_gpus)
         ]
@@ -856,7 +855,7 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
 
     def generate_get(self, object_refs, timeout=None):
         outputs = ray.get(object_refs, timeout=timeout)
-        padding_token_map = {"output_ids": self.tokenizer_pad_token_id}
+        padding_token_map = {"output_ids": self.config.tokenizer_config.pad_token_id}
         return concat_policy_outputs(outputs, padding_token_map)
 
     def generate(self, *args, **kwargs):

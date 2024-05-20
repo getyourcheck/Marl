@@ -8,8 +8,9 @@ from marl.model_backend.hf_model_runner import HfModelRunnerRayActorGroup
 from ..config_consts import *
 from ..tokenizer import tokenizer_utils
 from ..utils import expand_reward_token_id
-from marl.model_backend.models.critical_and_reward import get_critic_model,get_reward_model
+from marl.model_backend.models.critical_and_reward import get_critic_model,get_reward_model,get_model_type
 from marl.model_backend.models.modeling_internlm2_p import InternLM2ForCausalLM
+from transformers import AutoModelForCausalLM
 
 class BaseModelServer:
     # Initialize
@@ -27,10 +28,6 @@ class BaseModelServer:
     def initialize_async(self):
         model_path: str = self.model_config["model_path"]  # requisite
         self.model_type: str = self.model_config["model_type"]  # requisite
-        if self.model_type == MODEL_TYPE_REWARD:
-            temp_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-            self.reward_token_id = temp_config.reward_token_id
-            del temp_config
         trainer_config: dict = self.model_config["trainer_config"]  # requisite
         generator_config: dict = self.model_config.get("generator_config")  # optional
         tokenizer_path: str = self.model_config.get("tokenizer_path", model_path)  # opt
@@ -40,17 +37,24 @@ class BaseModelServer:
         trainer_config["tokenizer_path"] = tokenizer_path
         # Tokenizer is initialized in ModelServer (not ModelTrainer) to avoid remote call
         # FIXME: os.environ["TOKENIZERS_PARALLELISM"] = "false"
+        tokenizer_config = self.model_config.get("tokenizer_config", {})
         self.tokenizer = tokenizer_utils.get_tokenizer(
-            tokenizer_path, trust_remote_code=True
+            tokenizer_path, trust_remote_code=True,**tokenizer_config
         )
-        self.tokenizer.pad_token = self.tokenizer.unk_token
-        self.tokenizer.padding_side = "left"
-        trainer_config["tokenizer_pad_token_id"] = self.tokenizer.pad_token_id
-        trainer_config["model_class"] = InternLM2ForCausalLM
+        tokenizer_config["pad_token_id"] = self.tokenizer.pad_token_id
+        trainer_config["tokenizer_config"] = tokenizer_config
+        self.reward_token_id = self.tokenizer.pad_token_id
+        auto_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+        if self.model_type == MODEL_TYPE_REWARD and hasattr(auto_config,"reward_token_id"):
+            self.reward_token_id = auto_config.reward_token_id
+        trainer_config["model_class"] = AutoModelForCausalLM
+        model_class, _ = get_model_type(model_path)
+        if "InternLM2Model" in str(model_class):
+            trainer_config["model_class"] = InternLM2ForCausalLM
         if self.model_type == MODEL_TYPE_CRITIC:
-            trainer_config["model_class"] = get_critic_model(model_path ,"v_head")
+            trainer_config["model_class"] = get_critic_model(model_path, self.model_config.get("head_name", "v_head"))
         if self.model_type == MODEL_TYPE_REWARD:
-            trainer_config["model_class"] = get_reward_model(model_path ,"v_head")
+            trainer_config["model_class"] = get_reward_model(model_path, self.model_config.get("head_name", "v_head"))
 
         if self.trainer_type == ENGINE_HUGGINGFACE:
             self.trainer = HfModelRunnerRayActorGroup(
@@ -65,6 +69,7 @@ class BaseModelServer:
         if generator_config is not None:  # optional
             generator_config["model_path"] = model_path
             generator_config["tokenizer_path"] = tokenizer_path
+            generator_config["tokenizer_config"] = tokenizer_config
             shared_with_trainer = generator_config.get("shared_with_trainer", True)
             if shared_with_trainer:
                 self.generator = self.trainer
@@ -153,7 +158,7 @@ class BaseModelServer:
             input_ids, attention_mask = tokenizer_utils.encode(inputs, self.tokenizer)
         else:
             input_ids = inputs
-        if self.model_type == MODEL_TYPE_REWARD:
+        if self.model_type == MODEL_TYPE_REWARD and self.reward_token_id is not None:
             input_ids, attention_mask = expand_reward_token_id(
                 self.reward_token_id, input_ids, attention_mask
             )

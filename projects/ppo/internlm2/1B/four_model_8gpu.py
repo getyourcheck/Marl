@@ -1,5 +1,11 @@
 import torch
 
+tokenizer_config = dict(
+    pad_token_id = 0,
+    eos_token_id = 92542,
+    padding_side = 'left',
+)
+
 actor = dict(
     model_path="internlm/internlm2-chat-1_8b-sft",
     model_type="actor",

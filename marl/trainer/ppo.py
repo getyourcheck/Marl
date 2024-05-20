@@ -114,7 +114,7 @@ class PPOTrainer(object):
             criterion=self.value_criterion,
             micro_batch_size=self.critic_micro_bs,
         )
-        logger.info(f"[critic train] async duration: {round(time.time() - s_t, 2)} s, {self.value_minibatch} batch,value loss: {v_loss_ref}")
+        logger.info(f"[critic train] async duration: {round(time.time() - s_t, 2)} s, {self.value_minibatch} batch")
         value_loss.append(v_loss_ref)
         return value_loss
     

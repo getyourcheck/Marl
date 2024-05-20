@@ -1,5 +1,11 @@
 import torch
 
+tokenizer_config = dict(
+    pad_token_id = 0,
+    eos_token_id = 92542,
+    padding_side = 'left',
+)
+
 rollout_config = dict(
     write_to_file=False,
     actor_micro_bs=32,

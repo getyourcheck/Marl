@@ -222,6 +222,7 @@ class VllmGeneratorRayActor(VllmGenerator, RayActorMixin):
 
 class VllmGeneratorRayActorGroup(RayActorGroup):
     def __init__(self, name: str, config: dict):
+        import uuid
         self.released = True
         self.config = config
         self.tp_size = get_tp_size(config)  # tensor parallelism
@@ -250,7 +251,7 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
                 ray.remote(VllmGeneratorRayActor)
                 .options(
                     name=f"{name}_rank_{dp_i}",
-                    namespace=f"{VllmGeneratorRayActor.__class__.__name__}",
+                    namespace=f"{uuid.uuid4()}_{VllmGeneratorRayActor.__class__.__name__}",
                     num_cpus=1,
                     num_gpus=ray_actor_num_gpus,
                     scheduling_strategy=scheduling_strategy,

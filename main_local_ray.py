@@ -13,6 +13,7 @@ from marl.envs.txt_env import TxtEnv
 from marl.tokenizer.tokenizer_utils import get_tokenizer
 from marl.repeaters.base import BaseRepeater
 from marl.trainer.ppo import PPOTrainer
+from marl.timer import Timer
 import json
 
 def parse_args():
@@ -46,6 +47,10 @@ if __name__ == "__main__":
 
     configs_path = args.config
     config = Config.from_file(configs_path)
+    logger.info("#################### CONFIG BGN ####################")
+    for k, v in config.items():
+        logger.info(f"{k}: {v}")
+    logger.info("#################### CONFIG END ####################")
 
     #init dataset
     model_path = config["model_configs"]["actor"]["model_path"]

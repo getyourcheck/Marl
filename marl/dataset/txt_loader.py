@@ -30,6 +30,7 @@ class TxtMessageDataset(IterableDataset):
                  pt_data_samples: int = 0,
                  is_valid: bool = False,
                  random_seed: int = 110,
+                 sample_strategy: str = "batch", # TODO, sample data by ratio in "batch" or "all"
                  **kwargs
                  ):
         

@@ -48,9 +48,8 @@ class BaseModelServer:
         if self.model_type == MODEL_TYPE_REWARD and hasattr(auto_config,"reward_token_id"):
             self.reward_token_id = auto_config.reward_token_id
         trainer_config["model_class"] = AutoModelForCausalLM
-
         model_class, _ = get_model_type(model_path)
-        if "InternLM2Model" in str(model_class) and model_path == "internlm/internlm2-chat-1_8b-sft":
+        if "InternLM2Model" in str(model_class):
             trainer_config["model_class"] = InternLM2ForCausalLM
         if self.model_type == MODEL_TYPE_CRITIC:
             trainer_config["model_class"] = get_critic_model(model_path, self.model_config.get("head_name", "v_head"))

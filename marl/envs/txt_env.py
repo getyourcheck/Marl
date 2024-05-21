@@ -84,6 +84,12 @@ class TxtEnv(object):
         self.generate_kwargs:dict = generate_kwargs
         self.async_reward:bool = False
 
+        # pretrain data, hard code TODO
+        from marl.dataset.pt_dataloader import get_pretrain_data
+        self.pretrain_data_iterator = get_pretrain_data(folder="/cpfs01/shared/public/public_hdd/llmit_new/ppo/dataset/pretrain/1226-mix-v13-complete-watermark-pjx50/train", 
+                                                        length=4096, 
+                                                        batch_size=128)
+
     def rollout(self, policy_model:BaseModelServer, display=False):
         sample_data = deepcopy(next(self.dataloader))
         ppo_input_messages = []
@@ -121,6 +127,11 @@ class TxtEnv(object):
             trajectories["clipped_rewards"] = clipped_rewards
 
         # pretrain data
+        pretrain_data = deepcopy(next(self.pretrain_data_iterator))
+        # pretrain_data[0]['input_ids'].shape, pretrain_data[1].shape
+        trajectories["pretrain_input_ids"] = pretrain_data[0]['input_ids']
+        trajectories["pretrain_labels"] = pretrain_data[1]
+
         if len(pt_input_messages) > 0:
             pt_inputs = [policy_model.tokenizer.apply_chat_template(mes, tokenize=False, add_generation_prompt=False, return_tensors="pt") for mes in pt_input_messages]
             trajectories.pt_data = policy_model.tokenizer(pt_inputs, return_tensors="pt", padding=True)

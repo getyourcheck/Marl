@@ -108,7 +108,6 @@ def partition_list_by_micro_batch_size(
     micro_batch_size: list[int],
     labels: list[torch.Tensor],
     attention_mask: Optional[list[torch.Tensor]] = None,
-    loss_weights: Optional[list[float]] = None,
 ) -> list[dict]:
     length = len(input_ids)
     batch_size = input_ids[0].shape[0]
@@ -116,15 +115,12 @@ def partition_list_by_micro_batch_size(
         batch_size % micro_batch_size[0] > 0
     )
     micro_batches = [[{} for i in range(length)] for _ in range(num_splits)]
-    if loss_weights == None:
-        loss_weights = [None for _ in range(length)]
     if attention_mask == None:
         attention_mask = [None for _ in range(length)]
     for i in range(length):
         sub_input_ids = input_ids[i]
         sub_attention_mask = attention_mask[i]
         sub_labels = labels[i]
-        sub_loss_weights = loss_weights[i]
         sub_micro_batches = partition_by_micro_batch_size(
             sub_input_ids, micro_batch_size[i], sub_attention_mask, sub_labels
         )
@@ -136,7 +132,6 @@ def partition_list_by_micro_batch_size(
                 "attention_mask"
             ]
             micro_batches[micro_batch_index][i]["labels"] = sub_micro_batch["labels"]
-            micro_batches[micro_batch_index][i]["loss_weights"] = sub_loss_weights
     return micro_batches
 
 

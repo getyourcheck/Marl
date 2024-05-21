@@ -141,55 +141,6 @@ class HfModelRunner:
             f"[{self.model_type}] __init__() done with optimizer {self.optimizer.optimizer}."
         )
 
-    # Training
-    def compute_loss_and_backward(
-        self,
-        input_ids: Union[list[torch.Tensor], torch.Tensor],
-        labels: Optional[
-            Union[list[torch.Tensor], torch.Tensor, dict[str, torch.Tensor]]
-        ] = None,
-        attention_mask: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
-        criterion: Optional[Union[list[_Loss], _Loss]] = None,
-        loss_weights: Optional[list[float]] = None,
-        gradient_accumulation_steps=1,
-        **_ignored,
-    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
-        """
-        criterion: _Loss class, e.g., torch.nn.CrossEntropyLoss()
-        """
-        if isinstance(input_ids, torch.Tensor):  # returns torch.Tensor
-            # rarely, since self.train() changes all input_ids to [input_ids]
-            loss = self.compute_loss(input_ids, labels, attention_mask, criterion)
-            # loss /= gradient_accumulation_steps
-            self.accelerator.backward(loss)
-            return loss
-
-        elif type(input_ids) == list:  # returns list[torch.Tensor]
-            # multiple inputs grouped to compute loss, see:
-            # https://stackoverflow.com/questions/53994625/how-can-i-process-multi-loss-in-pytorch
-            assert (
-                len(input_ids)
-                == len(labels)
-                == len(criterion)
-                == len(attention_mask)
-                == len(loss_weights)
-            ), f"{len(input_ids)} {len(labels)} {len(criterion)} {len(attention_mask)} {len(loss_weights)} must equal"
-            loss_list = [0 for _ in range(len(input_ids))]
-            loss_weights = [x / float(len(loss_weights)) for x in loss_weights]  # to 1
-
-            loss_sum = 0
-            for i in range(len(input_ids)):
-                with self.accelerator.autocast():
-                    loss = self.compute_loss(input_ids[i], labels[i], attention_mask[i], criterion[i])
-                loss_sum += loss * loss_weights[i]
-                loss_list[i] = loss
-            # loss_sum /= gradient_accumulation_steps
-            self.accelerator.backward(loss_sum)
-            return loss_list
-
-        else:
-            raise NotImplementedError(f"unknown input {input_ids}")
-
     def compute_loss(
         self,
         input_ids: torch.Tensor,
@@ -201,13 +152,18 @@ class HfModelRunner:
     ) -> torch.Tensor:
         input_ids = input_ids.to(self.device)
         labels = input_ids.clone() if labels is None else labels
-        position_ids = attention_mask.long().cumsum(-1) - 1
-        position_ids.masked_fill_(attention_mask == 0, 1)
-        batch = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "position_ids": position_ids.to(self.device)
-        }
+        if attention_mask is not None:
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+            batch = {
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "position_ids": position_ids.to(self.device)
+            }
+        else:
+            batch = {
+                "input_ids": input_ids
+            }
         self.model.train()
 
         if criterion is None:
@@ -240,7 +196,6 @@ class HfModelRunner:
             loss = criterion(logits, labels)
         else:
             raise ValueError(f"labels of unsupported type: {type(labels)}")
-
         if loss_weight is not None:
             loss *= loss_weight
         return loss
@@ -271,61 +226,67 @@ class HfModelRunner:
         debug=False,
         **_ignored,
     ):
-        return_list = True
-
         if isinstance(input_ids, torch.Tensor):
             input_ids = [input_ids]
             labels = [labels]
             attention_mask = [attention_mask]
             criterion = [criterion]
-            loss_weights = [1] if loss_weights is None else [loss_weights]
-            micro_batch_size = None if micro_batch_size is None else [micro_batch_size]
-            return_list = False
-
-        if micro_batch_size is None:
-            for i in range(len(input_ids)):
-                self.info_rank0(
-                    f"[{self.model_type}] train input_ids[{i}] shape[{input_ids[i].shape}]"
-                )
-            origin_loss = self.compute_loss_and_backward(
-                input_ids, labels, attention_mask, criterion, loss_weights
-            )
+            loss_weights = [loss_weights] 
+            micro_batch_size = [micro_batch_size]
         else:
-            assert isinstance(input_ids, list)
-            micro_batches = partition_list_by_micro_batch_size(
-                input_ids, micro_batch_size, labels, attention_mask, loss_weights
-            )
-            origin_loss_list_mb = []
-            for index, micro_batch in enumerate(micro_batches):
-                input_ids_mb = []
-                attention_mask_mb = []
-                labels_mb = []
-                loss_weights_mb = []
-                for i in range(len(micro_batch)):
-                    input_ids_mb.append(micro_batch[i]["input_ids"].to(self.device))
-                    attention_mask_mb.append(micro_batch[i]["attention_mask"].to(self.device))
-                    labels_mb.append(micro_batch[i]["labels"])
-                    loss_weights_mb.append(micro_batch[i]["loss_weights"])
-                if index == 0:
-                    for i in range(len(input_ids_mb)):
-                        self.info_rank0(
-                            f"[{self.model_type}] will train input_ids_mb[{i}] shape[{input_ids_mb[i].shape}] * {len(micro_batches)} times"
-                        )
-                origin_loss_mb = self.compute_loss_and_backward(
-                    input_ids_mb,
-                    labels_mb,
-                    attention_mask_mb,
-                    criterion,
-                    loss_weights_mb,
-                    gradient_accumulation_steps=len(micro_batches),
+            if attention_mask is None:
+                attention_mask = [None for _ in range(len(input_ids))]
+            if criterion is None:
+                criterion = [None for _ in range(len(input_ids))]
+            if loss_weights is None:
+                loss_weights = [None for _ in range(len(input_ids))]
+            if micro_batch_size is None:
+                micro_batch_size = [None for _ in range(len(input_ids))]
+
+        loss_list = [[] for _ in range(len(input_ids))]
+
+        for index in range(len(input_ids)):
+            input_ids_entry = input_ids[index]
+            lables_entry = labels[index]
+            attention_mask_entry = attention_mask[index]
+            criterion_entry = criterion[index]
+            loss_weights_entry = loss_weights[index]
+            mb_size_entry = micro_batch_size[index]
+            loss_entry = []
+            if mb_size_entry is None:
+                micro_batches: list[dict[str, torch.Tensor]] = []
+                micro_batch = {}
+                micro_batch["input_ids"] = input_ids_entry
+                micro_batch["attention_mask"] = attention_mask_entry
+                micro_batch["labels"] = lables_entry
+                micro_batches.append(micro_batch)
+            else:
+                micro_batches = partition_by_micro_batch_size(
+                    input_ids = input_ids_entry, 
+                    micro_batch_size = mb_size_entry, 
+                    attention_mask = attention_mask_entry,
+                    labels = lables_entry,
                 )
-                origin_loss_list_mb.append(origin_loss_mb)
+            for mb_index, micro_batch in enumerate(micro_batches):
+                if mb_index == 0:
+                    self.info_rank0(
+                        f"[{self.model_type}] will train input_ids[{index}] shape[{micro_batch['input_ids'].shape}] * {len(micro_batches)} times"
+                    )
+                loss = self.compute_loss(
+                    input_ids=micro_batch["input_ids"], 
+                    labels=micro_batch["labels"],
+                    attention_mask=micro_batch["attention_mask"], 
+                    criterion=criterion_entry,
+                    loss_weight=loss_weights_entry,
+                    )
+                self.accelerator.backward(loss)
+                loss_entry.append(loss)
                 if debug:
                     set_seed(1234)
-            origin_loss = merge_loss_list(origin_loss_list_mb)
+            loss_list[index] = sum(loss_entry) / len(loss_entry)
 
         self.parameter_update(step_interval)
-        return origin_loss if return_list else origin_loss[0]
+        return loss_list if len(loss_list) > 1 else loss_list[0]
 
     # Inference
     @torch.no_grad()
@@ -769,39 +730,41 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
             assert isinstance(input_ids[0], torch.Tensor)
             micro_batch_size = [i for i in range(len(input_ids))]
             for index, input_id in enumerate(input_ids):
-                micro_batch_size[index] = input_id[index].shape[0] // self.dp_size + (
-                    input_id[index].shape[0] % self.dp_size > 0
+                micro_batch_size[index] = input_id.shape[0] // self.dp_size + (
+                    input_id.shape[0] % self.dp_size > 0
                 )  # round up division, i.e., math.ceil(a / b)
             micro_batches = partition_list_by_micro_batch_size(
-                input_ids, self.dp_size, attention_mask, labels
+                input_ids=input_ids,
+                micro_batch_size=micro_batch_size,
+                labels=labels,
+                attention_mask=attention_mask,
             )
+            assert len(micro_batches) == self.dp_size
             object_refs = []
             for index, micro_batch in enumerate(micro_batches):
                 input_ids_mb = []
                 attention_mask_mb = []
                 labels_mb = []
-                loss_weights_mb = []
-                assert len(micro_batch) == self.dp_size
                 for i in range(len(micro_batch)):
                     input_ids_mb.append(micro_batch[i]["input_ids"])
                     attention_mask_mb.append(micro_batch[i]["attention_mask"])
                     labels_mb.append(micro_batch[i]["labels"])
-                    loss_weights_mb.append(micro_batch[i]["loss_weights"])
-
-            object_ref = self.ray_actors[index].train.remote(
-                inputs=input_ids_mb,
-                attention_mask=attention_mask_mb,
-                labels=labels_mb,
-                loss_weights=loss_weights_mb,
-                *args,
-                **kwargs,
-            )
-            object_refs.append(object_ref)
-            return object_ref
+                object_ref = self.ray_actors[index].train.remote(
+                    input_ids=input_ids_mb,
+                    attention_mask=attention_mask_mb,
+                    labels=labels_mb,
+                    *args,
+                    **kwargs,
+                )
+                object_refs.append(object_ref)
+            return object_refs
 
     def train_get(self, object_refs, timeout=None):
         losses = ray.get(object_refs, timeout=timeout)
-        return sum(losses) / len(losses)
+        if isinstance(losses[0], list):
+            return [sum(sub_loss) / len(sub_loss) for sub_loss in losses]
+        else:
+            return sum(losses) / len(losses)
 
     def train(self, *args, **kwargs):
         object_refs = self.train_async(*args, **kwargs)

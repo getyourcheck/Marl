@@ -22,7 +22,7 @@ class PPOTrainer(object):
             value_learn_time=1,
             ppo_minibatch=512,
             value_minibatch=512,
-            pt_minibatch=None,
+            pt_minibatch=32,
             train_minibatch=None,
             pt_criterion = PretrainLoss(loss_factor=1.0),
             policy_criterion = ActorLoss(cliprange=0.2, loss_type="per_seq"),
@@ -79,23 +79,39 @@ class PPOTrainer(object):
                             mask=policy_batch_inputs["action_mask"],
                             loss_factor=torch.tensor(loss_factor),
                         )
+                train_input_ids = [policy_batch_inputs["input_ids"], ]
+                train_lables = [labels, ]
+                train_attention_mask = [policy_batch_inputs["attention_mask"], ]
+                train_criterion = [self.policy_criterion, ]
+                loss_weights=[1.0, ]
+                micro_batch_size=[self.actor_micro_bs, ]
                 # pretrain data
                 if self.pt_minibatch is not None:
-                    pt_inputs = {""}
-                    pass
+                    logger.info(f'[Policy Train] policy train with pretrain data {trajectories.pretrain_input_ids.shape}')
+                    train_input_ids.append(trajectories.pretrain_input_ids)
+                    train_lables.append(trajectories.pretrain_labels)
+                    train_attention_mask.append(None)
+                    train_criterion.append(None)
+                    loss_weights.append(0.5)
+                    micro_batch_size.append(1)
                 # for k, v in labels.items():
                 #     print("[Policy Train]]", k, v.shape)
                 s_t = time.time()
                 p_loss = policy_model.train(
-                    input_ids=policy_batch_inputs["input_ids"],
-                    labels=labels,     
-                    attention_mask=policy_batch_inputs["attention_mask"],
-                    criterion=self.policy_criterion,
-                    micro_batch_size=self.actor_micro_bs
+                    input_ids=train_input_ids,
+                    labels=train_lables,     
+                    attention_mask=train_attention_mask,
+                    criterion=train_criterion,
+                    loss_weights=loss_weights,
+                    micro_batch_size=micro_batch_size
                 )
-                
-                logger.info(f"[actor train] duration: {round(time.time() - s_t, 2)} s, {self.policy_minibatch} batch, Policy loss: {p_loss.item()}")
-                policy_loss.append(p_loss.item())
+                if self.pt_minibatch is not None:
+                    policy_loss.append(p_loss[0].item())
+                    pt_loss.append(p_loss[1].item())
+                    logger.info(f"[actor train] duration: {round(time.time() - s_t, 2)} s, prompt: {self.policy_minibatch} batch, Policy loss: {p_loss[0].item()}; pretrain: {self.pt_minibatch} batch, Pretrain loss: {p_loss[1].item()}")
+                else:
+                    policy_loss.append(p_loss.item())
+                    logger.info(f"[actor train] duration: {round(time.time() - s_t, 2)} s, {self.policy_minibatch} batch, Policy loss: {p_loss.item()}")
 
         with Timer("policy_model.sync_model") as t:
             policy_model.sync_model()

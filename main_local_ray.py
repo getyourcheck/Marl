@@ -13,12 +13,11 @@ from marl.envs.txt_env import TxtEnv
 from marl.tokenizer.tokenizer_utils import get_tokenizer
 from marl.repeaters.base import BaseRepeater
 from marl.trainer.ppo import PPOTrainer
-from marl.timer import Timer
 import json
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train LLM')
-    parser.add_argument('-c','--config', help='config file name or path.', type=str, default='projects/ppo/internlm2/1B/four_model_4gpu.py')
+    parser.add_argument('-c','--config', help='config file name or path.', type=str, default='projects/ppo/internlm2/1B/four_model_24gpu_alldata.py')
     parser.add_argument('-w','--work_dir', help='the dir to save logs and models', type=str, default=None)
     parser.add_argument('-a','--address', help='ray head address', type=str, default="auto")
     args = parser.parse_args()
@@ -47,10 +46,6 @@ if __name__ == "__main__":
 
     configs_path = args.config
     config = Config.from_file(configs_path)
-    logger.info("#################### CONFIG BGN ####################")
-    for k, v in config.items():
-        logger.info(f"{k}: {v}")
-    logger.info("#################### CONFIG END ####################")
 
     #init dataset
     model_path = config["model_configs"]["actor"]["model_path"]
@@ -108,7 +103,7 @@ if __name__ == "__main__":
         # # for value & policy learn
         value_loss_ref = ppo.value_learn_async(trajectories, critic_model)
 
-        ppo_loss = 0.0
+        ppo_loss, pt_loss = None, None
         if pretrain_step <= 0:
             ppo_loss, pt_loss = ppo.policy_learn(trajectories, actor_model)
             logger_train.info(f"[Policy Train] Step: {step}, ppo loss: {ppo_loss}, pretrain loss: {pt_loss}")
@@ -130,6 +125,7 @@ if __name__ == "__main__":
             entropy=trajectories.entropy.mean().item(),
             step=step,
             policy_loss=ppo_loss,
+            pretrain_loss=pt_loss,
             critic_loss=value_loss,
         )
         with open(f"{work_dir}/train.log.jsonl", "a") as f:

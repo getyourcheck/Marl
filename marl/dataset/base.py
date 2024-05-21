@@ -76,7 +76,7 @@ class MultiSourceDatset(IterableDataset):
         if sub_dataset_type == "file":
             for task in self._task_group:
                 task["dataset"] = FileDataset(task["filepath"])
-        else:
+        else: # TODO, read opensource datasets
             raise NotImplementedError("Cannot support filelist now.")
         sum_prob = sum([task["prob"] for task in self._task_group])
         for task in self._task_group:

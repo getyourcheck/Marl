@@ -20,6 +20,7 @@ from .generate_utils import (
     partition_by_micro_batch_size,
     partition_list_by_micro_batch_size,
     merge_loss_list,
+    get_answer_str,
 )
 from ..config_consts import *
 from ..policy_output import PolicyOutput, logprobs_from_logits
@@ -457,16 +458,16 @@ class HfModelRunner:
             output["attentions"] = model_output["attentions"]
         if output_hidden_states:
             output["hidden_states"] = model_output["hidden_states"]
-        if output_str:  # customized post processing
+        if output_str:  # customized post processing            
             output["output_str"] = self.tokenizer.batch_decode(
                 output_ids,
                 skip_special_tokens=True,
                 clean_up_tokenization_spaces=False,
             )
-            output["output_ans_str"] = self.tokenizer.batch_decode(
-                output_ids * output.answer_mask,
-                skip_special_tokens=True,
-                clean_up_tokenization_spaces=False,
+            output["output_ans_str"] = get_answer_str(
+                tokenizer=self.tokenizer,
+                output_ids=output_ids,
+                answer_mask=output.answer_mask,
             )
 
         output.to("cpu")

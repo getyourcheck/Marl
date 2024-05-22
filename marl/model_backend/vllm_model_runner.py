@@ -8,7 +8,7 @@ from vllm.sampling_params import _SAMPLING_EPS
 from ..policy_output import PolicyOutput, concat_policy_outputs
 from ..model_backend.generate_utils import get_question_answer_mask
 
-
+VLLM_DEFAULT_DEVICE = "cuda"
 
 class VllmGenerator:
 
@@ -50,6 +50,7 @@ class VllmGenerator:
             dtype=torch_dtype,
             swap_space=0,
             tensor_parallel_size=tensor_parallel_size,
+            device=VLLM_DEFAULT_DEVICE,
         )
         self.tokenizer = self.llm.get_tokenizer()
         tokenizer_config = self.model_config.get("tokenizer_config",{})
@@ -173,6 +174,12 @@ class VllmGenerator:
                 raise NotImplementedError("TODO: output_hidden_states")  # TODO
             if output_str:  # return list[str]
                 output["output_ans_str"] = [req_output.outputs[0].text]
+                output_str = self.tokenizer.decode(
+                    output_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
+                )
+                output["output_str"] = [output_str]
             output.to("cpu")
 
             policy_outputs.append(output)

@@ -1,5 +1,6 @@
 import torch
 from typing import Optional, Union
+from transformers import PreTrainedTokenizer
 
 
 def get_question_answer_mask(
@@ -145,3 +146,19 @@ def merge_loss_list(loss_list_mb: list[list[torch.Tensor]]):
             losses.append(loss_list_mb[batch_index][loss_index])
         loss_list[loss_index] = sum(losses) / micro_batch_num
     return loss_list
+
+def get_answer_str(
+    tokenizer: PreTrainedTokenizer, 
+    output_ids: torch.Tensor, 
+    answer_mask: torch.Tensor,
+):
+    answer_ids = output_ids * answer_mask
+    zero_mask = answer_ids.eq(0)
+    answer_ids = zero_mask * tokenizer.all_special_ids[0] + answer_ids
+    
+    answer_str = tokenizer.batch_decode(
+        answer_ids,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
+    )
+    return answer_str

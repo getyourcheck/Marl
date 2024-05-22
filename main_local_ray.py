@@ -38,6 +38,8 @@ if __name__ == "__main__":
     work_dir = args.work_dir
     if work_dir is None:
         work_dir = os.path.dirname(os.path.abspath(__file__))
+    work_dir = os.path.abspath(work_dir)
+    logger.info(f"using work_dir: {work_dir}")
     os.makedirs(work_dir, exist_ok=True)
 
     logger.add(f"{work_dir}/train.log", filter=lambda record: record["extra"].get("name") == "train")
@@ -51,7 +53,8 @@ if __name__ == "__main__":
     model_path = config["model_configs"]["actor"]["model_path"]
     tokenizer_config = config.get("tokenizer_config",{})
     for model_type in config["model_configs"].keys():
-        config["model_configs"][model_type]["tokenizer_config"] = tokenizer_config
+        if "tokenizer_config" not in config["model_configs"][model_type]:
+            config["model_configs"][model_type]["tokenizer_config"] = tokenizer_config
     tokenizer = get_tokenizer(model_path, trust_remote_code=True,**tokenizer_config)
     dataset_config = config["dataset_config"]
     dataset_config["tokenizer"] = tokenizer

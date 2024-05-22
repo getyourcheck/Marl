@@ -161,20 +161,21 @@ class TxtMessageDataset(IterableDataset):
         """Post process sequence: tokenization & truncation."""
         mes_type = "ppo"
         message_data = message['data']
-        if message_data[-1]["role"] == "assistant":
-            if message_data[-1]["content"] != '':
-                token_ids = self.tokenizer.apply_chat_template(message_data, tokenize=True, add_generation_prompt=False, return_tensors="pt")
-                mes_type = "pt"
+        try:
+            if message_data[-1]["role"] == "assistant":
+                if message_data[-1]["content"] != '':
+                    token_ids = self.tokenizer.apply_chat_template(message_data, tokenize=True, add_generation_prompt=False, return_tensors="pt")
+                    mes_type = "pt"
+                else:
+                    message_data = message_data[:-1]
+                    token_ids = self.tokenizer.apply_chat_template(message_data, tokenize=True, add_generation_prompt=True, return_tensors="pt")
             else:
-                message_data = message_data[:-1]
                 token_ids = self.tokenizer.apply_chat_template(message_data, tokenize=True, add_generation_prompt=True, return_tensors="pt")
-        else:
-            token_ids = self.tokenizer.apply_chat_template(message_data, tokenize=True, add_generation_prompt=True, return_tensors="pt")
-        if token_ids.shape[-1] <= 4:
+        except:
+            print(f"[data check] skip dirty data: {message_data}")
             return None
-
         # assert token_ids.shape[-1] <= self.max_seq_len, "{}-{}".format(token_ids.shape[-1], self.max_seq_len)
-        if token_ids.shape[-1] > self.max_seq_len:
+        if token_ids.shape[-1] <= 4 or token_ids.shape[-1] > self.max_seq_len:
             # TODO truncation??
             # raise RuntimeError(f"token_ids is too long: {token_ids.shape[-1]}")
             # print(f"[TXT Loader] Warning, {mes_type} message {message} is too long, skipped...")

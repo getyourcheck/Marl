@@ -17,7 +17,7 @@ import json
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train LLM')
-    parser.add_argument('-c','--config', help='config file name or path.', type=str, default='projects/ppo/internlm2/1B/four_model_24gpu_alldata.py')
+    parser.add_argument('-c','--config', help='config file name or path.', type=str, default='projects/ppo/internlm2/1B/four_model_24gpu_alldata_vllm.py')
     parser.add_argument('-w','--work_dir', help='the dir to save logs and models', type=str, default=None)
     parser.add_argument('-a','--address', help='ray head address', type=str, default="auto")
     args = parser.parse_args()

@@ -13,7 +13,7 @@ DP_SIZE=8
 GRADIENT_ACC_STEP=DATA_BATCH_SIZE // DP_SIZE // TRAIN_MICRO_BATCH_SIZE
 
 tokenizer_config = dict(
-    pad_token_id = 2,
+    pad_token_id = 128002,
     eos_token_id = 128001,
     bos_token_id = 128000,
     padding_side = 'left',
@@ -206,6 +206,13 @@ model_configs = dict(
         model_path="sfairXC/FsfairX-LLaMA3-RM-v0.1",
         model_type="reward",
         head_name="score",
+        tokenizer_config = dict(
+            pad_token_id = 2,
+            eos_token_id = 128001,
+            bos_token_id = 128000,
+            padding_side = 'left',
+            chat_template = "{{ bos_token }}{%- if messages[0]['role'] == 'system' -%}{% set loop_messages = messages[1:] %}{%- else -%}{% set loop_messages = messages %}{% endif %}System: This is a chat between a user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions based on the context. The assistant should also indicate when the answer cannot be found in the context.\n\n{% for message in loop_messages %}{%- if message['role'] == 'user' -%}User: {{ message['content'].strip() + '\n\n' }}{%- else -%}Assistant: {{ message['content'].strip() + '\n\n' }}{%- endif %}{% if loop.last and message['role'] == 'user' %}Assistant:{% endif %}{% endfor %}",
+        ),
         trainer_config=dict(
             trainer_type="huggingface",
             torch_dtype="auto",

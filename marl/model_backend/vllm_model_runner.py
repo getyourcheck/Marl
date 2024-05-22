@@ -174,6 +174,12 @@ class VllmGenerator:
                 raise NotImplementedError("TODO: output_hidden_states")  # TODO
             if output_str:  # return list[str]
                 output["output_ans_str"] = [req_output.outputs[0].text]
+                output_str = self.tokenizer.decode(
+                    output_ids,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=False,
+                )
+                output["output_str"] = [output_str]
             output.to("cpu")
 
             policy_outputs.append(output)

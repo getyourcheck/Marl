@@ -119,15 +119,13 @@ trajectories = actor_model.generate(
     micro_batch_size=16,
     generate_kwargs=generate_kwargs
 )
-sequences, attention_mask, action_mask = process_sequences(trajectories.output_ids, trajectories.input_ids.size(1), 92542,0)
 
 input_messages = deepcopy(prompt)
 for i in range(len(range(len(trajectories.output_ans_str)))):
     input_messages[i].append({"role": "assistant", "content": trajectories.output_ans_str[i]})
 
 value_output = reward_model.infer(
-    inputs=sequences,
-    attention_mask=attention_mask,
+    inputs=input_messages,
     output_logprobs=False, 
     micro_batch_size=32,
 )

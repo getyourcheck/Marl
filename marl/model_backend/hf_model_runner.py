@@ -629,7 +629,7 @@ from .ray_utils import DEFAULT_NUM_CPUS, DEFAULT_NUM_GPUS
 from ..config_utils import get_gpu_requirement, get_dp_size
 from ..policy_output import concat_policy_outputs
 
-
+# Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/ppo_actor.py
 class HfModelRunnerRayActor(HfModelRunner, RayActorMixin):
     """
     A ray.remote Actor Class initialized by HfModelRunnerRayActorGroup,

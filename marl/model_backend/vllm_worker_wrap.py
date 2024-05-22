@@ -1,6 +1,5 @@
-# adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/main/openrlhf/trainer/ray/vllm_worker_wrap.py
+# Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_worker_wrap.py
 import importlib
-import inspect
 
 import torch
 from vllm.model_executor.weight_utils import hf_model_weights_iterator

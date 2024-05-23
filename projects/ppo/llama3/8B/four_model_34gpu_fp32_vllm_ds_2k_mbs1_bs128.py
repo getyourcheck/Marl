@@ -91,7 +91,8 @@ model_configs = dict(
                     "reduce_bucket_size": "auto", 
                     "zero_hpz_partition_size": 1, 
                     "zero_quantized_weights": False, 
-                    "zero_quantized_gradients": False
+                    "zero_quantized_gradients": False,
+                    "stage3_gather_16bit_weights_on_model_save": True,
                 }, 
                 "bf16": {
                     "enabled": True

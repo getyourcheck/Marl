@@ -82,6 +82,7 @@ model_configs = dict(
                 "fp16": {"enable": False},
                 "zero_optimization": {
                     "stage": ZERO_STAGE,
+                    "stage3_gather_16bit_weights_on_model_save": True,
                 },
                 "gradient_accumulation_steps": ACTOR_GRADIENT_ACC_STEP,
                 "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,

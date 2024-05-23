@@ -1,6 +1,6 @@
 import torch
-from marl.config import Config
-from marl.config_consts import ENGINE_HUGGINGFACE, ENGINE_VLLM
+from marl.config.config import Config
+from marl.config.config_consts import ENGINE_HUGGINGFACE, ENGINE_VLLM
 from marl.model_backend.hf_model_runner import HfModelRunnerRayActorGroup
 from marl.model_backend.vllm_model_runner import VllmGeneratorRayActorGroup
 from marl.tokenizer.tokenizer_utils import get_tokenizer

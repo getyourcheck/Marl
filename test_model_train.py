@@ -1,8 +1,8 @@
 # %%
 import torch
-from marl.config import Config
+from marl.config.config import Config
 from marl.tokenizer.tokenizer_utils import get_tokenizer
-from marl.config_consts import ENGINE_HUGGINGFACE
+from marl.config.config_consts import ENGINE_HUGGINGFACE
 
 trainer_config = Config(
     dict(

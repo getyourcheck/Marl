@@ -4,7 +4,7 @@ import pytest
 import tempfile
 import shutil
 from transformers import AutoModelForCausalLM
-from marl.config import Config
+from marl.config.config import Config
 from marl.model_backend.hf_model_runner import HfModelRunner
 from marl.coordinator import Coordinator
 from marl.model_server.base_model_server import BaseModelServer

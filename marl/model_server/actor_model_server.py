@@ -3,7 +3,7 @@ from loguru import logger
 from typing import Optional
 
 from .base_model_server import BaseModelServer
-from ..config_consts import *
+from ..config.config_consts import *
 from ..tokenizer import tokenizer_utils
 
 class ActorModelServer(BaseModelServer):

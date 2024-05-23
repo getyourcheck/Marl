@@ -1,4 +1,4 @@
-from marl.config import Config
+from marl.config.config import Config
 from marl.coordinator import Coordinator
 from copy import deepcopy
 import re

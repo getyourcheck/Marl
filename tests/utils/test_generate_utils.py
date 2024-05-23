@@ -1,6 +1,6 @@
 import torch
-from marl.config import Config
-from marl.config_consts import ENGINE_HUGGINGFACE
+from marl.config.config import Config
+from marl.config.config_consts import ENGINE_HUGGINGFACE
 from marl.model_backend.hf_model_runner import HfModelRunner
 from marl.utils import set_seed
 from marl.loss.actor_loss import ActorLoss

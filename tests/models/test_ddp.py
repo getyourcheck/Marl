@@ -1,5 +1,5 @@
 from marl.coordinator import Coordinator
-from marl.config import Config
+from marl.config.config import Config
 from marl.tokenizer.tokenizer_utils import get_tokenizer
 from marl.loss.actor_loss import ActorLoss
 import torch

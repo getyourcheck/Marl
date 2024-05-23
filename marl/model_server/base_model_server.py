@@ -5,7 +5,7 @@ from transformers import AutoConfig
 from typing import Optional
 from marl.model_backend.hf_model_runner import HfModelRunnerRayActorGroup
 
-from ..config_consts import *
+from ..config.config_consts import *
 from ..tokenizer import tokenizer_utils
 from marl.model_backend.models.modeling_internlm2_p import InternLM2ForCausalLM
 from transformers import AutoModelForCausalLM

@@ -1,7 +1,7 @@
 # %%
 
 import torch
-from marl.config import Config
+from marl.config.config import Config
 from marl.tokenizer.tokenizer_utils import get_tokenizer
 from marl.ppo_learner_utils import calc_kl_penalty
 from marl.policy_output import logprobs_from_logits

@@ -3,9 +3,9 @@ from pathlib import Path
 from loguru import logger
 import ray
 
-from .config_utils import get_resource_requirement
+from .config.config_utils import get_resource_requirement
 from .model_server import *
-from .config_consts import *
+from .config.config_consts import *
 
 ROOT_PATH = Path(__file__).parents[1].resolve()
 

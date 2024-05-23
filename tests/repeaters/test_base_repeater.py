@@ -38,7 +38,7 @@ if __name__ == "__main__":
     rl_repeater = BaseRepeater(reward_scale=False, fine_grained_rm=False, value_ema=False)
 
     # init model
-    from marl.config import Config
+    from marl.config.config import Config
 
     trainer_config = Config(
         dict(

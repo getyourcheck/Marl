@@ -204,7 +204,7 @@ from .ray_utils import set_runtime_env
 from .ray_actor_mixin import RayActorMixin
 from .ray_actor_group import RayActorGroup
 from .ray_utils import DEFAULT_NUM_CPUS, DEFAULT_NUM_GPUS
-from ..config_utils import get_tp_size, get_dp_size
+from ..config.config_utils import get_tp_size, get_dp_size
 from ..policy_output import concat_policy_outputs
 from .generate_utils import partition_by_micro_batch_size
 

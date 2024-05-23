@@ -1,5 +1,5 @@
 # %%
-from marl.config import Config
+from marl.config.config import Config
 from marl.model_backend.vllm_model_runner import VllmGenerator
 from marl.model_backend.hf_model_runner import HfModelRunner
 from marl.timer import Timer

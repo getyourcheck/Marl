@@ -6,7 +6,7 @@ from loguru import logger
 import torch
 import numpy as np
 
-from marl.config import Config
+from marl.config.config import Config
 from marl.coordinator import Coordinator
 from marl.dataset.txt_loader import TxtMessageDataset
 from marl.envs.txt_env import TxtEnv

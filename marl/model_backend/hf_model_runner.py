@@ -22,7 +22,7 @@ from .generate_utils import (
     merge_loss_list,
     get_answer_str,
 )
-from ..config_consts import *
+from ..config.config_consts import *
 from ..policy_output import PolicyOutput, logprobs_from_logits
 from ..tokenizer import tokenizer_utils
 from ..utils import set_seed
@@ -626,7 +626,7 @@ from .ray_utils import create_ray_actors
 from .ray_actor_mixin import RayActorMixin
 from .ray_actor_group import RayActorGroup
 from .ray_utils import DEFAULT_NUM_CPUS, DEFAULT_NUM_GPUS
-from ..config_utils import get_gpu_requirement, get_dp_size
+from ..config.config_utils import get_gpu_requirement, get_dp_size
 from ..policy_output import concat_policy_outputs
 
 # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/ppo_actor.py

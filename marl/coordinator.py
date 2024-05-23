@@ -4,7 +4,8 @@ from loguru import logger
 import ray
 
 from .config_utils import get_resource_requirement
-from .model_server import BaseModelServer
+from .model_server import *
+from .config_consts import *
 
 ROOT_PATH = Path(__file__).parents[1].resolve()
 
@@ -48,10 +49,19 @@ class Coordinator:
             self.context = ray_context
 
     def create_models(self) -> dict[str, BaseModelServer]:
-        self.model_dict = {
-            model_name: BaseModelServer(model_name, model_config)
-            for model_name, model_config in self.model_configs.items()
-        }
+        self.model_dict = {}
+        for model_name, model_config in self.model_configs.items():
+            model_type = model_config["model_type"]
+            if model_type == MODEL_TYPE_ACTOR:
+                self.model_dict[model_name] = ActorModelServer(model_name, model_config)
+            elif model_type == MODEL_TYPE_CRITIC:
+                self.model_dict[model_name] = CriticModelServer(model_name, model_config)
+            elif model_type == MODEL_TYPE_REWARD:
+                self.model_dict[model_name] = RewardModelServer(model_name, model_config)
+            elif model_type == MODEL_TYPE_REFERENCE:
+                self.model_dict[model_name] = RefModelServer(model_name, model_config)
+            else:
+                raise NotImplementedError(f"Unknown model_type: {model_type}")
         self._schedule()
         return self.model_dict
 

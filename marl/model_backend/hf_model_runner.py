@@ -741,8 +741,7 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
         if self.initialize_ref is not None:
             ray.get(self.initialize_ref)
         else:
-            # could be called twice if self.generator == self.trainer
-            logger.warning("self.initialize_ref is None when calling initialize_get()")
+            logger.info("self.initialize_get None, maybe self.generator==self.trainer")
         self.initialize_ref = None
 
     # Training

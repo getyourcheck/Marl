@@ -12,6 +12,7 @@ tokenizer_config = dict(
 )
 
 rollout_config=dict(
+    write_to_file=False,
     actor_micro_bs=32,
     reward_micro_bs=32,
     clip_reward_min=-5,
@@ -54,7 +55,8 @@ train_config=dict(
 
 model_configs=dict(
     actor = dict(
-        model_path="/cpfs01/shared/public/public_hdd/lishuaibin/models/1.8B_baseline/sft/Luyou_1B_FT_0.19_130_avg5/",
+        # model_path="/cpfs01/shared/public/public_hdd/lishuaibin/models/1.8B_baseline/sft/Luyou_1B_FT_0.19_130_avg5/",
+        model_path="/fs-computility/llm/shared/marl/models/internlm2/1.8B/hf/Luyou_1B_FT_0.19_130_avg5/",
         model_type="actor",
         model_class=InternLM2ForCausalLM,
         use_flash_attn=False,
@@ -69,7 +71,7 @@ model_configs=dict(
                 loss_type="per_seq",
             ),
             parallel=dict(
-                data=dict(size=32, mode="deepspeed"),
+                data=dict(size=8, mode="deepspeed"),
                 tensor=dict(size=1, mode="1d"),
                 pipeline=dict(size=1, interleaved_overlap=False),
                 sequence=False,
@@ -96,17 +98,25 @@ model_configs=dict(
                     "grad_accum_dtype": "fp32"
                 }, 
                 "train_micro_batch_size_per_gpu": 2, 
-                "gradient_accumulation_steps": 8,
+                "gradient_accumulation_steps": 32,
                 "train_batch_size": 512
             }
         ),
         generator_config=dict(
-            shared_with_trainer=True,
+            shared_with_trainer=False,
+            generator_type="vllm",
+            parallel=dict(
+                data=dict(size=1, mode="ddp"),
+                tensor=dict(size=4, mode="1d"),
+                pipeline=dict(size=1, interleaved_overlap=False),
+                sequence=False,
+            ),
         ),
     ),
 
     reference = dict(
-        model_path="/cpfs01/shared/public/public_hdd/lishuaibin/models/1.8B_baseline/sft/Luyou_1B_FT_0.19_130_avg5/",
+        # model_path="/cpfs01/shared/public/public_hdd/lishuaibin/models/1.8B_baseline/sft/Luyou_1B_FT_0.19_130_avg5/",
+        model_path="/fs-computility/llm/shared/marl/models/internlm2/1.8B/hf/Luyou_1B_FT_0.19_130_avg5/",
         model_type="reference",
         model_class=InternLM2ForCausalLM,
         use_flash_attn=False,
@@ -114,7 +124,7 @@ model_configs=dict(
             torch_dtype=torch.float32,
             trainer_type="huggingface",
             parallel=dict(
-                data=dict(size=4, mode="ddp"),
+                data=dict(size=2, mode="ddp"),
                 tensor=dict(size=1, mode="1d"),
                 pipeline=dict(size=1, interleaved_overlap=False),
                 sequence=False,
@@ -123,7 +133,8 @@ model_configs=dict(
     ),
 
     critic = dict(
-        model_path="/cpfs01/shared/public/public_hdd/lvchengqi/ckpts/reward_model/R-Luyou-1B-8k-D20240130-v1/819_hf_bf16/",
+        # model_path="/cpfs01/shared/public/public_hdd/lvchengqi/ckpts/reward_model/R-Luyou-1B-8k-D20240130-v1/819_hf_bf16/",
+        model_path="/fs-computility/llm/shared/marl/models/internlm2/1.8B/hf/R-Luyou-1B-8k-D20240130-v1/819_hf_bf16/",
         model_type="critic",
         model_class=InternLM2ForCriticModel,
         use_flash_attn=False,
@@ -171,7 +182,8 @@ model_configs=dict(
     ),
 
     reward = dict(
-        model_path="/cpfs01/shared/public/public_hdd/lvchengqi/ckpts/reward_model/R-Luyou-1B-8k-D20240130-v1/819_hf_bf16/",
+        # model_path="/cpfs01/shared/public/public_hdd/lvchengqi/ckpts/reward_model/R-Luyou-1B-8k-D20240130-v1/819_hf_bf16/",
+        model_path="/fs-computility/llm/shared/marl/models/internlm2/1.8B/hf/R-Luyou-1B-8k-D20240130-v1/819_hf_bf16/",
         model_type="reward",
         model_class=InternLM2ForRewardModel,
         use_flash_attn=False,
@@ -179,7 +191,7 @@ model_configs=dict(
             trainer_type="huggingface",
             torch_dtype="auto",
             parallel=dict(
-                data=dict(size=4, mode="ddp"),
+                data=dict(size=2, mode="ddp"),
                 tensor=dict(size=1, mode="1d"),
                 pipeline=dict(size=1, interleaved_overlap=False),
                 sequence=False,
@@ -194,7 +206,7 @@ dataset_config = {
         "max_seq_len": 1024,
         "random_seed": 1024,
         "ppo_datas": [
-            "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/new_arrow_messages_data/Anthropic_hh-rlhf_helpful-base-train.json::1.0",
+            "Anthropic/hh-rlhf/helpful-base::1.0",
             "Anthropic/hh-rlhf/harmless-base::0.5",
-            ],
+        ],
     }

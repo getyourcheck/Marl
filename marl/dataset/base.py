@@ -39,24 +39,57 @@ class InfiniteDataset(IterableDataset):
 
 
 class FileDataset(IterableDataset):
-    """Single file dataset."""
+    """Single json file dataset."""
 
-    def __init__(self, filename):
+    def __init__(self, filename, tokenizer):
         self._filename = filename
+        self.tokenizer = tokenizer
 
     def __iter__(self):
         with open_file(self._filename) as fin:
             for lineno, line in enumerate(fin):
-                ex = json.loads(line)
-                if ex is None:
+                data = json.loads(line)
+                try:
+                    self.tokenizer.apply_chat_template(data, tokenize=True)
+                except:
+                    print(f"[data tokenize check] skip dirty data: {data}")
                     continue
-                yield ex
+                if data is None:
+                    continue
+                yield data
+
+
+class OpensourceDataset(IterableDataset):
+    """Opensource dataset."""
+
+    def __init__(self, filename, tokenizer):
+        self._filename = filename
+        self.tokenizer = tokenizer
+        assert "Anthropic" in filename or "openai" in filename, "[Coming soon] currently only support loading Anthropic and openai opensource datasets..."
+        if "Anthropic" in filename:
+            from .open_datasets.Anthropic_hh_rlhf import AnthropicHhrlhf
+            self.data_list = AnthropicHhrlhf(path=filename)
+        elif "openai" in filename:
+            pass
+        else:
+            raise NotImplementedError()
+
+    def __iter__(self):
+        for lineno, data in enumerate(self.data_list):
+            if data is None:
+                continue
+            try:
+                self.tokenizer.apply_chat_template(data, tokenize=True)
+            except:
+                print(f"[data tokenize check] skip dirty data: {data}")
+                continue
+            yield data
 
 
 class MultiSourceDatset(IterableDataset):
     """Multiple source dataset."""
 
-    def __init__(self, task_groups, sub_dataset_type="file", random_seed=1024):
+    def __init__(self, task_groups, sub_dataset_type="file", tokenizer=None, random_seed=1024):
         self._task_group = []
         for _task in task_groups:
             file_path, extra_info = _task.split("::")[0], _task.split("::")[1]
@@ -75,7 +108,13 @@ class MultiSourceDatset(IterableDataset):
         assert len(self._task_group) > 0, "No data to be trained"
         if sub_dataset_type == "file":
             for task in self._task_group:
-                task["dataset"] = FileDataset(task["filepath"])
+                filepath = task["filepath"]
+                if ".json" in filepath:
+                    task["dataset"] = FileDataset(filepath, tokenizer)
+                else:
+                    # loading opensource datasets
+                    print(f"Try loading {filepath} from huggingface ...")
+                    task["dataset"] = OpensourceDataset(filepath, tokenizer)
         else:
             raise NotImplementedError("Cannot support filelist now.")
         sum_prob = sum([task["prob"] for task in self._task_group])
@@ -85,6 +124,8 @@ class MultiSourceDatset(IterableDataset):
         self.random_seed = random_seed
 
     def __iter__(self):
+        """ sample data one task by probs
+        """
         rng = random.Random(self.random_seed)
         probs = [task["prob"] for task in self._task_group]
         # Initialize task iterator
@@ -106,14 +147,22 @@ if __name__ == "__main__":
                         "./data/ppo_data/ppo_data_1.json::0.1[REWARD_META]:cn-safety",
                         "./data/ppo_data/ppo_data_1.json::0.1",
                         "./data/ppo_data/ppo_data_1.json::0.0",
+                        "Anthropic/hh-rlhf::0.5"
                         ],
         "max_seq_len": 4096,
         "num_samples_each_epoch": 8,
         "random_seed": 1
     }
+    from transformers import AutoTokenizer
+
+    """ppo reader test here"""
+    model_path = "/cpfs01/shared/public/public_hdd/lishuaibin/models/1.8B_baseline/sft/Luyou_1B_FT_0.19_130_avg5/"
+    model_path = "/fs-computility/llm/shared/marl/models/internlm2/1.8B/hf/Luyou_1B_FT_0.19_130_avg5/"
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 
     example_dataset = iter(MultiSourceDatset(
         task_groups=dataset_config["task_groups"],
         sub_dataset_type="file",
+        tokenizer=tokenizer
     ))
     print(next(example_dataset))

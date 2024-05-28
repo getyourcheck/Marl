@@ -1,7 +1,6 @@
 from loguru import logger
 import ray
 import torch
-from transformers import AutoConfig
 from typing import Optional
 from marl.model_backend.hf_model_runner import HfModelRunnerRayActorGroup
 
@@ -23,7 +22,7 @@ class BaseModelServer:
         self.trainer_config = None
         self.model_ref = None
         self.is_initialized = False
-        self.show_cuda_mem_stats = self.model_config.get("show_cuda_mem_stats", True)
+        self.show_cuda_mem_stats = self.model_config.get("show_cuda_mem_stats", False)
         logger.info(f"model_name={model_name}, model_config={model_config}")
 
     def init_tokenizer_and_config(self, model_config):

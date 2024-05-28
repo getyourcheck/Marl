@@ -65,8 +65,9 @@ class TxtEnv(object):
             clip_reward_min:int=-5,
             clip_reward_max:int=5,
             reward_function:BaseModelServer=None, 
+            async_reward:bool=True,
             generate_kwargs:dict=None,
-            **kwargs,
+            **_ignored,
         ):
         """
         Args:
@@ -81,8 +82,8 @@ class TxtEnv(object):
         self.reward_micro_bs = reward_micro_bs
         self.clip_reward_min = clip_reward_min
         self.clip_reward_max = clip_reward_max
+        self.async_reward = async_reward
         self.generate_kwargs:dict = generate_kwargs
-        self.async_reward:bool = False
 
     def rollout(self, policy_model:BaseModelServer, display=False):
         sample_data = deepcopy(next(self.dataloader))
@@ -141,7 +142,7 @@ class TxtEnv(object):
             rm_input_messages.append(cur_rm_data)
 
         print(f"[For Reward]: {rm_input_messages[0]}")
-        reward_output_ref = self.reward_function.infer(
+        reward_output_ref = self.reward_function.infer_async(
             rm_input_messages, 
             output_logprobs=False,
             micro_batch_size=self.reward_micro_bs

@@ -1,156 +1,80 @@
 from loguru import logger
 import ray
 import torch
-from transformers import AutoConfig
 from typing import Optional
 from marl.model_backend.hf_model_runner import HfModelRunnerRayActorGroup
 
-from ..config_consts import *
+from ..config.config_consts import *
 from ..tokenizer import tokenizer_utils
-from ..utils import expand_reward_token_id
-from marl.model_backend.models.critical_and_reward import get_critic_model,get_reward_model,get_model_type
 from marl.model_backend.models.modeling_internlm2_p import InternLM2ForCausalLM
 from transformers import AutoModelForCausalLM
+
+DEFAULT_GET_TIMEOUT = 600.0  # 10 min
 
 class BaseModelServer:
     # Initialize
     def __init__(self, model_name: str, model_config: dict):
         self.model_name = model_name
         self.model_config = model_config
-        self.trainer = None
-        self.generator = None
         self.tokenizer = None
+        self.tokenizer_config = None
+        self.trainer = None
+        self.trainer_config = None
         self.model_ref = None
         self.is_initialized = False
-        self.show_cuda_mem_stats = self.model_config.get("show_cuda_mem_stats", True)
+        self.show_cuda_mem_stats = self.model_config.get("show_cuda_mem_stats", False)
         logger.info(f"model_name={model_name}, model_config={model_config}")
 
-    def initialize_async(self):
-        model_path: str = self.model_config["model_path"]  # requisite
-        self.model_type: str = self.model_config["model_type"]  # requisite
-        trainer_config: dict = self.model_config["trainer_config"]  # requisite
-        generator_config: dict = self.model_config.get("generator_config")  # optional
-        tokenizer_path: str = self.model_config.get("tokenizer_path", model_path)  # opt
-
-        trainer_config["model_path"] = model_path
-        trainer_config["model_type"] = self.model_type
-        trainer_config["tokenizer_path"] = tokenizer_path
-        # Tokenizer is initialized in ModelServer (not ModelTrainer) to avoid remote call
-        # FIXME: os.environ["TOKENIZERS_PARALLELISM"] = "false"
-        tokenizer_config = self.model_config.get("tokenizer_config", {})
+    def init_tokenizer_and_config(self, model_config):
+        tokenizer_config = model_config.get("tokenizer_config", {})
+        if "tokenizer_path" in tokenizer_config:
+            tokenizer_path = tokenizer_config["tokenizer_path"]
+        elif "tokenizer_path" in model_config:
+            tokenizer_path = model_config["tokenizer_path"]
+        else:
+            tokenizer_path = model_config["model_path"]
+    
         self.tokenizer = tokenizer_utils.get_tokenizer(
             tokenizer_path, trust_remote_code=True,**tokenizer_config
         )
+
+        tokenizer_config["tokenizer_path"] = tokenizer_path
         tokenizer_config["pad_token_id"] = self.tokenizer.pad_token_id
+        self.tokenizer_config = tokenizer_config
+
+    def init_trainer_config(self, model_config, tokenizer_config):
+        model_path = model_config["model_path"]
+        trainer_config: dict = model_config["trainer_config"]  # requisite
         trainer_config["tokenizer_config"] = tokenizer_config
-        self.reward_token_id = self.tokenizer.pad_token_id
-        auto_config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-        if self.model_type == MODEL_TYPE_REWARD and hasattr(auto_config,"reward_token_id"):
-            self.reward_token_id = auto_config.reward_token_id
-        trainer_config["model_class"] = AutoModelForCausalLM
-        model_class, _ = get_model_type(model_path)
-        if "InternLM2Model" in str(model_class):
-            trainer_config["model_class"] = InternLM2ForCausalLM
-        if self.model_type == MODEL_TYPE_CRITIC:
-            trainer_config["model_class"] = get_critic_model(model_path, self.model_config.get("head_name", "v_head"))
-        if self.model_type == MODEL_TYPE_REWARD:
-            trainer_config["model_class"] = get_reward_model(model_path, self.model_config.get("head_name", "v_head"))
+        trainer_config["tokenizer_path"] = tokenizer_config["tokenizer_path"]
+        trainer_config["model_path"] = model_path
+        trainer_config["model_type"] = model_config["model_type"]
+        trainer_config["model_class"] = self.get_model_class(model_path)
+        self.trainer_config = trainer_config
 
-        if self.trainer_type == ENGINE_HUGGINGFACE:
-            self.trainer = HfModelRunnerRayActorGroup(
-                name=f"{self.model_name}_trainer", config=trainer_config
-            )
-        elif self.trainer_type == ENGINE_INTERNEVO:
-            raise NotImplementedError(f"{self.trainer_type}.")
+    def get_model_class(self, model_path):
+        # will be changed in subclasses
+        if model_path == "internlm/internlm2-chat-1_8b-sft":  # TODO: remove this
+            return InternLM2ForCausalLM
+        return AutoModelForCausalLM
+
+    def initialize_async(self):
+        self.init_tokenizer_and_config(self.model_config)
+        self.init_trainer_config(self.model_config, self.tokenizer_config)
+
+        trainer_type = self.trainer_config.get("trainer_type", "huggingface").lower()
+        if trainer_type == ENGINE_HUGGINGFACE:
+            self.trainer = HfModelRunnerRayActorGroup(name=f"{self.model_name}_trainer", config=self.trainer_config)
+        elif trainer_type == ENGINE_INTERNEVO:
+            raise NotImplementedError(f"{trainer_type}.")
         else:
-            raise ValueError(f"No trainer is registered with type: {self.trainer_type}")
-
-        self.generator = self.trainer  # use trainer for self.generate() by default
-        if generator_config is not None:  # optional
-            generator_config["model_path"] = model_path
-            generator_config["tokenizer_path"] = tokenizer_path
-            generator_config["tokenizer_config"] = tokenizer_config
-            shared_with_trainer = generator_config.get("shared_with_trainer", True)
-            if shared_with_trainer:
-                self.generator = self.trainer
-            else:
-                if self.generator_type == ENGINE_HUGGINGFACE:
-                    self.generator = HfModelRunnerRayActorGroup(
-                        f"{self.model_name}_generator", generator_config
-                    )
-                elif self.generator_type == ENGINE_VLLM:
-                    from marl.model_backend.vllm_model_runner import VllmGeneratorRayActorGroup
-                    self.generator = VllmGeneratorRayActorGroup(
-                        f"{self.model_name}_generator", generator_config
-                    )
-                    # init process group
-                    self.trainer.init_process_group(self.generator)
-                else:
-                    raise ValueError(
-                        f"No generator is registered with type '{self.generator_type}'."
-                    )
+            raise ValueError(f"No trainer is registered with type: {trainer_type}")
 
     def initialize_get(self):
         self.trainer.initialize_get()
-        if self.generator is not None:
-            self.generator.initialize_get()
-
         self.is_initialized = True
-        logger.info(
-            f"{self.model_name} has been initialized. self.generator_eq_trainer: {self.generator_eq_trainer}"
-        )
+        logger.info(f"{self.model_name} has been initialized.")
 
-    @property
-    def generator_eq_trainer(self):
-        return id(self.generator) == id(self.trainer)
-
-    @property
-    def trainer_type(self):
-        trainer_config = self.model_config["trainer_config"]
-        trainer_type: str = trainer_config.get("trainer_type")
-        return trainer_type.lower() if trainer_type is not None else trainer_type
-
-    @property
-    def generator_type(self):
-        generator_config: dict = self.model_config.get("generator_config")
-        if generator_config is None:
-            return None
-        generator_type: str = generator_config.get("generator_type")
-        return generator_type.lower() if generator_type is not None else generator_type
-
-    def model_get(self):
-        if not self.model_ref:
-            self.model_ref = self.trainer.get_model()  # an reference
-        return ray.get(self.model_ref, timeout=600.0)  # 10min timeout
-
-    def state_dict_get(self):
-        return ray.get(self.trainer.get_state_dict(), timeout=600.0)  # 10min timeout
-
-    # Training
-    def train_async(
-        self, input_ids, labels=None, attention_mask=None, *args, **train_kwargs
-    ):
-        return self.trainer.train_async(
-            input_ids, labels, attention_mask, *args, **train_kwargs
-        )
-
-    def train_get(self, object_refs, timeout: Optional[float] = None):
-        return self.trainer.train_get(object_refs, timeout=timeout)
-
-    def train(self, input_ids, labels=None, attention_mask=None, *args, **train_kwargs):
-        object_refs = self.train_async(
-            input_ids, labels, attention_mask, *args, **train_kwargs
-        )
-        loss = self.train_get(object_refs)
-        if self.show_cuda_mem_stats:
-            trainer_mem = self.trainer.get_cuda_mem_stats()
-            generator_mem = self.generator.get_cuda_mem_stats()
-            logger.info(
-                f"{self.model_name} trainer allocated GPU memory: {trainer_mem.total_current_mb} MiB, "
-                f"generator allocated GPU memory: {generator_mem.total_current_mb} MiB, "
-                f"generator_eq_trainer: {self.generator_eq_trainer}"
-            )
-        return loss
 
     # Inference
     def infer_async(self, inputs, attention_mask=None, *args, **infer_kwargs):
@@ -158,89 +82,61 @@ class BaseModelServer:
             input_ids, attention_mask = tokenizer_utils.encode(inputs, self.tokenizer)
         else:
             input_ids = inputs
-        if self.model_type == MODEL_TYPE_REWARD and self.reward_token_id is not None:
-            input_ids, attention_mask = expand_reward_token_id(
-                self.reward_token_id, input_ids, attention_mask
-            )
-        return self.trainer.infer_async(
-            input_ids=input_ids, attention_mask=attention_mask, *args, **infer_kwargs
-        )
+        return self.trainer.infer_async(input_ids=input_ids, attention_mask=attention_mask, *args, **infer_kwargs)
 
     def infer_get(self, object_refs, timeout: Optional[float] = None):
         return self.trainer.infer_get(object_refs, timeout=timeout)
 
     def infer(self, inputs, *args, **infer_kwargs):
         object_refs = self.infer_async(inputs, *args, **infer_kwargs)
-        return self.infer_get(object_refs)
+        results = self.infer_get(object_refs)
+        self.log_cuda_mem_stats(remark="[infer] ")
+        return results
+
+    # Training
+    def train_async(self, input_ids, labels=None, attention_mask=None, *args, **train_kwargs):
+        return self.trainer.train_async(input_ids, labels, attention_mask, *args, **train_kwargs)
+
+    def train_get(self, object_refs, timeout: Optional[float] = None):
+        return self.trainer.train_get(object_refs, timeout=timeout)
+
+    def train(self, input_ids, labels=None, attention_mask=None, *args, **train_kwargs):
+        object_refs = self.train_async(input_ids, labels, attention_mask, *args, **train_kwargs)
+        loss = self.train_get(object_refs)
+        self.log_cuda_mem_stats(remark="[train] ")
+        return loss
 
     # Generation
     def generate_async(self, inputs, attention_mask=None, *args, **generate_kwargs):
-        if isinstance(inputs, torch.Tensor):
-            input_ids = inputs
-        elif isinstance(inputs, list):
-            if not self.generator_eq_trainer:
-                input_ids, attention_mask = tokenizer_utils.encode(
-                    inputs, self.tokenizer, return_tensors=None, padding=False, add_generation_prompt=True
-                )
-            else:
-                input_ids, attention_mask = tokenizer_utils.encode(
-                    inputs, self.tokenizer, add_generation_prompt=True
-                )
-        else:
-            raise NotImplementedError(f"unknown inputs: {inputs}")
-
-        return self.generator.generate_async(
-            input_ids=input_ids, attention_mask=attention_mask, *args, **generate_kwargs
-        )
+        raise NotImplementedError
 
     def generate_get(self, object_refs, timeout: Optional[float] = None):
-        return self.generator.generate_get(object_refs, timeout=timeout)
+        raise NotImplementedError
 
     def generate(self, inputs, *args, **generate_kwargs):
-        object_refs = self.generate_async(inputs, *args, **generate_kwargs)
-        policy_output = self.generate_get(object_refs)
-        if self.show_cuda_mem_stats:
-            trainer_mem = self.trainer.get_cuda_mem_stats()
-            generator_mem = self.generator.get_cuda_mem_stats()
-            logger.info(
-                f"{self.model_name} trainer allocated GPU memory: {trainer_mem.total_current_mb} MiB, "
-                f"generator allocated GPU memory: {generator_mem.total_current_mb} MiB, "
-                f"generator_eq_trainer: {self.generator_eq_trainer}"
-            )
-        return policy_output
+        raise NotImplementedError
 
-    # Sync
-    def sync_model(self, *args, **kwargs):
-        if not self.generator_eq_trainer:
-            self.trainer.broadcast_model_to_generator(self.generator)
+    # Model
+    def model_get(self):
+        if not self.model_ref:
+            self.model_ref = self.trainer.get_model()  # an reference
+        return ray.get(self.model_ref, timeout=DEFAULT_GET_TIMEOUT)
 
-    # Others
-    def set_seed(self, seed: int = None):
-        self.trainer.set_seed(seed)
-        if not self.generator_eq_trainer:
-            self.generator.set_seed(seed)
-
-    def clean_up(self):
-        self.trainer.release_resources()
-        if not self.generator_eq_trainer:
-            self.generator.release_resources()
-        logger.info(f"{self.model_name} is destroyed.")
-
-    def _load_chat_template(self, chat_template):
-        # adopted from: https://github.com/vllm-project/vllm/blob/0e163fce18594c7e29dc5a143dd6b33d213fcbf3/vllm/entrypoints/openai/serving_chat.py#L245
-        if chat_template is not None:
-            try:
-                with open(chat_template, "r") as f:
-                    self.tokenizer.chat_template = f.read()
-            except OSError:
-                # If opening a file fails, set chat template to be args to
-                # ensure we decode so our escape are interpreted correctly
-                pass
-            logger.info(f"Using input chat template:\n{self.tokenizer.chat_template}")
-        elif self.tokenizer.chat_template is not None:
-            logger.info(f"Using default chat template:\n{self.tokenizer.chat_template}")
-        else:
-            logger.warning("No chat template provided. Chat API will not work.")
+    def state_dict_get(self):
+        return ray.get(self.trainer.get_state_dict(), timeout=DEFAULT_GET_TIMEOUT)
 
     def save_model(self, path):
         self.trainer.save_model(path)
+
+    # Misc.
+    def set_seed(self, seed: int = None):
+        self.trainer.set_seed(seed)
+
+    def log_cuda_mem_stats(self, remark=""):
+        if self.show_cuda_mem_stats:
+            trainer_mem = self.trainer.get_cuda_mem_stats()
+            logger.info(f"{remark}{self.model_name} trainer allocated GPU memory: {trainer_mem.total_current_mb} MiB")
+
+    def clean_up(self):
+        self.trainer.release_resources()
+        logger.info(f"{self.model_name} is destroyed.")

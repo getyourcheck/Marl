@@ -34,7 +34,7 @@ if __name__ == "__main__":
     txt_env = TxtEnv(dataloader=txt_loader, reward_function=None)
 
     # model
-    from marl.config import Config
+    from marl.config.config import Config
 
     trainer_config = Config(
         dict(

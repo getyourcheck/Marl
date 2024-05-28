@@ -76,7 +76,7 @@ class BaseRepeater(object):
             answer_end_id = 92542,
             norm_adv = False,
             norm_rewards = True,
-            **kwargs,
+            **_ignored,
         ):
         self.sft_model = sft_model
         self.actor_micro_bs = actor_micro_bs
@@ -101,6 +101,8 @@ class BaseRepeater(object):
             sft_model:BaseModelServer=None,
             env=None,  # only used for async reward model.infer_get() in _get_kl_rewards
         ):
+        value_output_ref = self._get_values_async(trajectories, value_model)
+
         action_mask = trajectories["action_mask"]
         num_actions = action_mask.size(1)
         if sft_model is not None:
@@ -112,7 +114,8 @@ class BaseRepeater(object):
         trajectories["policy_logprobs"] = policy_logprobs
         trajectories["sft_logprobs"] = sft_logprobs
 
-        values = self._get_values(trajectories, value_model)
+        # values = self._get_values(trajectories, value_model)
+        values = self._get_values_collect(value_output_ref, value_model)
         old_values = values[:, -num_actions:]
         advantages, returns = self.get_advantages_and_returns(old_values, kl_rewards, action_mask)
     
@@ -131,6 +134,10 @@ class BaseRepeater(object):
             output_logits=False, 
             output_logprobs=True
         )
+        # policy_output = policy_model.infer_get(policy_output)
+        # logger.info(f"[actor infer] duration: {round(time.time() - s_t, 2)} s")
+
+        # s_t = time.time()
         sft_output = self.sft_model.infer_async(
             inputs=trajectories.output_ids, 
             micro_batch_size=self.ref_micro_bs, 
@@ -138,8 +145,11 @@ class BaseRepeater(object):
             output_logits=False, 
             output_logprobs=True
         )
+        # sft_output = self.sft_model.infer_get(sft_output)
+        # logger.info(f"[ref infer] duration: {round(time.time() - s_t, 2)} s")
+
         policy_output = policy_model.infer_get(policy_output)
-        sft_output = policy_model.infer_get(sft_output)
+        sft_output = self.sft_model.infer_get(sft_output)
         logger.info(f"[actor & ref infer_async] duration: {round(time.time() - s_t, 2)} s")
 
         ################## Experimental ################################################
@@ -183,8 +193,26 @@ class BaseRepeater(object):
             output_logits=True, 
             micro_batch_size=self.critic_micro_bs,
         )
-        print(f"[critic infer] duration: {round(time.time() - s_t, 2)} s")
+        logger.info(f"[critic infer] duration: {round(time.time() - s_t, 2)} s")
         raw_values = value_output.logits.squeeze(-1)
+        return raw_values
+
+    def _get_values_async(self, trajectories: PolicyOutput, value_model:BaseModelServer):
+        s_t = time.time()
+        value_output_ref = value_model.infer_async(
+            inputs = trajectories.output_ids, 
+            attention_mask=trajectories.attention_mask, 
+            output_logits=True, 
+            micro_batch_size=self.critic_micro_bs,
+        )
+        logger.info(f"[critic infer] async duration: {round(time.time() - s_t, 2)} s")
+        return value_output_ref
+
+    def _get_values_collect(self, value_output_ref, value_model:BaseModelServer):
+        s_t = time.time()
+        value_output = value_model.infer_get(value_output_ref)
+        raw_values = value_output.logits.squeeze(-1)
+        logger.info(f"[critic infer] async wait duration: {round(time.time() - s_t, 2)} s")
         return raw_values
 
     def _get_advantages_and_returns(self, trajectories):

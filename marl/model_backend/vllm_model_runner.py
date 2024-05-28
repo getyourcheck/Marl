@@ -15,6 +15,7 @@ class VllmGenerator:
     def __init__(self, model_config) -> None:
         self.model_config: dict = model_config
 
+    # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_engine.py
     def initialize(self) -> None:
         model_path = self.model_config.get("model_path")
         torch_dtype = self.model_config.get("torch_dtype", "auto")
@@ -203,12 +204,14 @@ from .ray_utils import set_runtime_env
 from .ray_actor_mixin import RayActorMixin
 from .ray_actor_group import RayActorGroup
 from .ray_utils import DEFAULT_NUM_CPUS, DEFAULT_NUM_GPUS
-from ..config_utils import get_gpu_requirement, get_tp_size, get_dp_size
+from ..config.config_utils import get_tp_size, get_dp_size
 from ..policy_output import concat_policy_outputs
 from .generate_utils import partition_by_micro_batch_size
 
 
 class VllmGeneratorRayActor(VllmGenerator, RayActorMixin):
+
+    # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_engine.py
     def init_process_group(
         self, master_address, master_port, rank_offset, world_size, group_name
     ):
@@ -235,8 +238,9 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
         self.tp_size = get_tp_size(config)  # tensor parallelism
         self.dp_size = get_dp_size(config)  # num of vllm_engines
         self.tokenizer_pad_token_id = config.tokenizer_config.pad_token_id
-
         self.ray_actors: list[VllmGeneratorRayActor] = []  # i.e., vllm_engines
+
+        # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_engine.py
         for dp_i in range(self.dp_size):
             ray_actor_num_gpus = int(self.tp_size == 1)
             scheduling_strategy = None

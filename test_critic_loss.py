@@ -1,6 +1,6 @@
 import torch
-from marl.config import Config
-from marl.config_consts import ENGINE_HUGGINGFACE, MODEL_TYPE_CRITIC
+from marl.config.config import Config
+from marl.config.config_consts import ENGINE_HUGGINGFACE, MODEL_TYPE_CRITIC
 from marl.model_backend.hf_model_runner import HfModelRunner
 from marl.loss.critic_loss import CriticLoss
 from marl.ppo_learner_utils import compute_rewards, get_advantages_and_returns

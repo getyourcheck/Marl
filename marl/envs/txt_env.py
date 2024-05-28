@@ -62,11 +62,12 @@ class TxtEnv(object):
             max_new_tokens:int=1024, 
             actor_micro_bs:int=32,
             reward_micro_bs:int=32,
-            clip_reward_min:int=-1.5,
-            clip_reward_max:int=1.5,
+            clip_reward_min:int=-5,
+            clip_reward_max:int=5,
             reward_function:BaseModelServer=None, 
+            async_reward:bool=True,
             generate_kwargs:dict=None,
-            **kwargs,
+            **_ignored,
         ):
         """
         Args:
@@ -81,8 +82,8 @@ class TxtEnv(object):
         self.reward_micro_bs = reward_micro_bs
         self.clip_reward_min = clip_reward_min
         self.clip_reward_max = clip_reward_max
+        self.async_reward = async_reward
         self.generate_kwargs:dict = generate_kwargs
-        self.async_reward:bool = False
 
         # pretrain data, hard code TODO
         from marl.dataset.pt_dataloader import get_pretrain_data
@@ -152,7 +153,7 @@ class TxtEnv(object):
             rm_input_messages.append(cur_rm_data)
 
         print(f"[For Reward]: {rm_input_messages[0]}")
-        reward_output_ref = self.reward_function.infer(
+        reward_output_ref = self.reward_function.infer_async(
             rm_input_messages, 
             output_logprobs=False,
             micro_batch_size=self.reward_micro_bs
@@ -213,7 +214,7 @@ if __name__ == "__main__":
     }
 
     # actor model
-    from marl.config import Config
+    from marl.config.config import Config
     trainer_config = Config(
         dict(
             model_path=model_path,
@@ -230,7 +231,7 @@ if __name__ == "__main__":
     actor_model = HfModelRunner(model_config=trainer_config)
     actor_model.initialize()
     # rm model
-    from marl.config_consts import MODEL_TYPE_REWARD, ENGINE_HUGGINGFACE
+    from marl.config.config_consts import MODEL_TYPE_REWARD, ENGINE_HUGGINGFACE
     reward_trainer_config = Config(
         dict(
             model_path="/cpfs01/shared/public/llm_model/ckpt/Luyou_1B/R-Luyou-1B-8k-D20240130-v1-hf/",

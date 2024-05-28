@@ -5,7 +5,7 @@
 # from accelerate import Accelerator
 import torch
 from marl.coordinator import Coordinator
-from marl.config import Config
+from marl.config.config import Config
 
 # %% 1. load a pretrained model
 cluster_address = "auto"

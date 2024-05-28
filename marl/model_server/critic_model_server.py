@@ -1,22 +1,8 @@
-import torch
 from .base_model_server import BaseModelServer
-from ..policy_output import PolicyOutput
-from transformers.modeling_outputs import (
-    SequenceClassifierOutputWithPast,
-)
-from ..tokenizer import tokenizer_utils
+from ..model_backend.models.critical_and_reward import get_critic_model
 
 class CriticModelServer(BaseModelServer):
-    # def initialize(self):
-    #     pass
-
-    def infer_async(self, inputs, *args, **infer_kwargs):
-        print(f"[{self.__class__.__name__}] self.critic_model.forward(str)")
-        input_ids, attention_mask = tokenizer_utils.encode(inputs,self.tokenizer)
-        model_output: SequenceClassifierOutputWithPast = self.trainer.infer_async(
-            inputs = input_ids,
-            attention_mask = attention_mask,
-            *args
-            **infer_kwargs,
-        )
-        return model_output
+    # Initialize
+    def get_model_class(self, model_path):
+        head_name = self.model_config.get("head_name", "v_head")
+        return get_critic_model(model_path, head_name)

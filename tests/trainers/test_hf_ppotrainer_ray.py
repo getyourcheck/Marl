@@ -6,7 +6,7 @@ from marl.envs.txt_env import TxtEnv
 from marl.repeaters.base import BaseRepeater
 from marl.trainer.ppo import PPOTrainer
 from marl.coordinator import Coordinator
-from marl.config import Config
+from marl.config.config import Config
 
 if __name__ == "__main__":
 

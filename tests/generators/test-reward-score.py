@@ -1,7 +1,7 @@
 import torch
-from marl.config import Config
+from marl.config.config import Config
 from marl.coordinator import Coordinator
-from marl.config import Config
+from marl.config.config import Config
 from marl.model_backend.hf_model_runner import HfModelRunner
 import numpy as np
 import re

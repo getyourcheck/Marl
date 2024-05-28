@@ -1,7 +1,7 @@
 import torch
 import pytest
 from loguru import logger
-from marl.config import Config
+from marl.config.config import Config
 from marl.model_backend.hf_model_runner import HfModelRunnerRayActorGroup
 from marl.loss.actor_loss import ActorLoss
 from marl.tokenizer.tokenizer_utils import get_tokenizer

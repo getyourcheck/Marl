@@ -29,6 +29,7 @@ rollout_config = dict(
     clip_reward_min=-5,
     clip_reward_max=5,
     max_new_tokens=MAX_ANSWER_LEN,
+    async_reward = True,
     generate_kwargs={
         "do_sample": True,
         "temperature": 1.0,
@@ -93,6 +94,7 @@ model_configs = dict(
                 "fp16": {"enable": False},
                 "zero_optimization": {
                     "stage": ZERO_STAGE,
+                    "stage3_gather_16bit_weights_on_model_save": True,
                 },
                 "gradient_accumulation_steps": GRADIENT_ACC_STEP,
                 "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,

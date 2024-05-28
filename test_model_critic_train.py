@@ -1,7 +1,7 @@
 # %%
 from marl.coordinator import Coordinator
-from marl.config import Config
-from marl.config_consts import MODEL_TYPE_CRITIC, ENGINE_HUGGINGFACE
+from marl.config.config import Config
+from marl.config.config_consts import MODEL_TYPE_CRITIC, ENGINE_HUGGINGFACE
 
 # INIT METHOD 1
 # cluster_address = "auto"

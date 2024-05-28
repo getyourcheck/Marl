@@ -21,9 +21,10 @@ tokenizer_config = dict(
 rollout_config = dict(
     actor_micro_bs=GENERATE_MICRO_BATCH_SIZE,
     reward_micro_bs=GENERATE_MICRO_BATCH_SIZE,
-    clip_reward_min=-1.5,
-    clip_reward_max=1.5,
+    clip_reward_min=-5,
+    clip_reward_max=5,
     max_new_tokens=MAX_ANSWER_LEN,
+    async_reward=True,
     generate_kwargs={
         "do_sample": True,
         "temperature": 1.0,
@@ -44,11 +45,11 @@ repeater_config = dict(
     reward_scale=False,
     fine_grained_rm=False,
     value_ema=False,
-    kl_coeff=0.02,
+    kl_coeff=0.01,
     gamma=1.0,
-    gae_lambda=0.95,
+    gae_lambda=0.99,
     answer_end_id=92542,
-    norm_adv=True,
+    norm_rewards=True,
 )
 
 train_config = dict(
@@ -56,17 +57,16 @@ train_config = dict(
     value_minibatch=DATA_BATCH_SIZE,
     actor_micro_bs=TRAIN_MICRO_BATCH_SIZE,
     critic_micro_bs=TRAIN_MICRO_BATCH_SIZE,
-    pretrain_step=0,
-    save_interval=80,
-    step_interval=1,
+    pretrain_step=40,
+    save_interval=800,
 )
 
 model_configs = dict(
     actor=dict(
         model_path="internlm/internlm2-chat-7b-sft",
         model_type="actor",
-        torch_dtype=torch.float32,
         trainer_config=dict(
+            torch_dtype=torch.float32,
             trainer_type="huggingface",
             train_kwargs=dict(
                 micro_bsz=1,
@@ -82,11 +82,25 @@ model_configs = dict(
                 sequence=False,
             ),
             deepspeed_config={
-                "bf16": {"enable": False},
-                "fp16": {"enable": False},
                 "zero_optimization": {
-                    "stage": ZERO_STAGE,
-                },
+                    "stage": ZERO_STAGE, 
+                    "offload_param": {
+                        "device": "none"
+                    },
+                    "reduce_bucket_size": "auto", 
+                    "zero_hpz_partition_size": 1, 
+                    "zero_quantized_weights": False, 
+                    "zero_quantized_gradients": False
+                }, 
+                "bf16": {
+                    "enabled": True
+                }, 
+                "gradient_clipping": 1.0, 
+                "prescale_gradients": False, 
+                "wall_clock_breakdown": False, 
+                "data_types": {
+                    "grad_accum_dtype": "fp32"
+                }, 
                 "gradient_accumulation_steps": GRADIENT_ACC_STEP,
                 "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,
             },
@@ -105,8 +119,8 @@ model_configs = dict(
     reference=dict(
         model_path="internlm/internlm2-chat-7b-sft",
         model_type="reference",
-        torch_dtype=torch.float32,
         trainer_config=dict(
+            torch_dtype=torch.float32,
             trainer_type="huggingface",
             parallel=dict(
                 data=dict(size=DP_SIZE, mode="deepspeed"),
@@ -115,25 +129,39 @@ model_configs = dict(
                 sequence=False,
             ),
             deepspeed_config={
-                "bf16": {"enable": False},
-                "fp16": {"enable": False},
                 "zero_optimization": {
-                    "stage": ZERO_STAGE,
-                },
+                    "stage": ZERO_STAGE, 
+                    "offload_param": {
+                        "device": "none"
+                    },
+                    "reduce_bucket_size": "auto", 
+                    "zero_hpz_partition_size": 1, 
+                    "zero_quantized_weights": False, 
+                    "zero_quantized_gradients": False
+                }, 
+                "bf16": {
+                    "enabled": True
+                }, 
+                "gradient_clipping": 1.0, 
+                "prescale_gradients": False, 
+                "wall_clock_breakdown": False, 
+                "data_types": {
+                    "grad_accum_dtype": "fp32"
+                }, 
                 "gradient_accumulation_steps": GRADIENT_ACC_STEP,
                 "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,
             },
         ),
     ),
     critic=dict(
-        model_path="/cpfs01/shared/public/llm_model/ckpt/Ampere_7B/R-Ampere-7B-8k-D20240126-v1_hf/",
+        model_path="/fs-computility/llm/shared/marl/models/internlm2/7B/hf/R-Ampere-7B-8k-D20240126-v1_hf/",
         model_type="critic",
-        torch_dtype=torch.float32,
         trainer_config=dict(
+            torch_dtype="auto",
             trainer_type="huggingface",
             train_kwargs=dict(
                 micro_bsz=1,
-                lr=1e-6,
+                lr=5e-6,
                 total_steps=1e9,
                 lr_decay_rate=1,
                 loss_type="per_seq",
@@ -145,21 +173,35 @@ model_configs = dict(
                 sequence=False,
             ),
             deepspeed_config={
-                "bf16": {"enable": False},
-                "fp16": {"enable": False},
                 "zero_optimization": {
-                    "stage": ZERO_STAGE,
-                },
+                    "stage": ZERO_STAGE, 
+                    "offload_param": {
+                        "device": "none"
+                    },
+                    "reduce_bucket_size": "auto", 
+                    "zero_hpz_partition_size": 1, 
+                    "zero_quantized_weights": False, 
+                    "zero_quantized_gradients": False
+                }, 
+                "bf16": {
+                    "enabled": True
+                }, 
+                "gradient_clipping": 1.0, 
+                "prescale_gradients": False, 
+                "wall_clock_breakdown": False, 
+                "data_types": {
+                    "grad_accum_dtype": "fp32"
+                }, 
                 "gradient_accumulation_steps": GRADIENT_ACC_STEP,
                 "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,
             },
         ),
     ),
     reward=dict(
-        model_path="/cpfs01/shared/public/llm_model/ckpt/Ampere_7B/R-Ampere-7B-8k-D20240126-v1_hf/",
+        model_path="/fs-computility/llm/shared/marl/models/internlm2/7B/hf/R-Ampere-7B-8k-D20240126-v1_hf/",
         model_type="reward",
-        torch_dtype=torch.float32,
         trainer_config=dict(
+            torch_dtype="auto",
             trainer_type="huggingface",
             parallel=dict(
                 data=dict(size=DP_SIZE, mode="deepspeed"),
@@ -168,11 +210,25 @@ model_configs = dict(
                 sequence=False,
             ),
             deepspeed_config={
-                "bf16": {"enable": False},
-                "fp16": {"enable": False},
                 "zero_optimization": {
-                    "stage": ZERO_STAGE,
-                },
+                    "stage": ZERO_STAGE, 
+                    "offload_param": {
+                        "device": "none"
+                    },
+                    "reduce_bucket_size": "auto", 
+                    "zero_hpz_partition_size": 1, 
+                    "zero_quantized_weights": False, 
+                    "zero_quantized_gradients": False
+                }, 
+                "bf16": {
+                    "enabled": True
+                }, 
+                "gradient_clipping": 1.0, 
+                "prescale_gradients": False, 
+                "wall_clock_breakdown": False, 
+                "data_types": {
+                    "grad_accum_dtype": "fp32"
+                }, 
                 "gradient_accumulation_steps": GRADIENT_ACC_STEP,
                 "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,
             },

@@ -4,74 +4,76 @@ MAX_PROMPT_LEN=1536
 MAX_ANSWER_LEN=512
 
 DATA_BATCH_SIZE=512
-GENERATE_MICRO_BATCH_SIZE=16  # 512 / 16dp = 32, 32 / 16 = 2 pass
-AC_INFER_MICRO_BATCH_SIZE=8  # 512 / 16dp = 32, 32 / 8 = 4 pass
-REF_INFER_MICRO_BATCH_SIZE=8 # 512 / 8 = 64 pass
-TRAIN_MICRO_BATCH_SIZE=2  # 512 / 16dp = 32, 32 / 2 = 16 pass
+GENERATE_MICRO_BATCH_SIZE=8
+INFER_MICRO_BATCH_SIZE=16
+REWARD_MICRO_BATCH_SIZE=16
+REF_MICRO_BATCH_SIZE=22
+ACTOR_TRAIN_MICRO_BATCH_SIZE=8
+CRITIC_TRAIN_MICRO_BATCH_SIZE=8
 
 ZERO_STAGE=3
-ACTOR_DP_SIZE=16
-CRITIC_DP_SIZE=8
-INFER_DP_SIZE=1
+TRAIN_DP_SIZE=8
+INFER_DP_SIZE=3
 VLLM_TP=2
-ACTOR_GRADIENT_ACC_STEP=DATA_BATCH_SIZE // ACTOR_DP_SIZE // TRAIN_MICRO_BATCH_SIZE
-CRITIC_GRADIENT_ACC_STEP=DATA_BATCH_SIZE // CRITIC_DP_SIZE // TRAIN_MICRO_BATCH_SIZE
+ACTOR_GRADIENT_ACC_STEP=DATA_BATCH_SIZE // TRAIN_DP_SIZE // ACTOR_TRAIN_MICRO_BATCH_SIZE
+CRITIC_GRADIENT_ACC_STEP=DATA_BATCH_SIZE // TRAIN_DP_SIZE // CRITIC_TRAIN_MICRO_BATCH_SIZE
 
-MODEL_DTYPE=torch.float32
+MODEL_DTYPE=torch.bfloat16
 
 tokenizer_config = dict(
-    pad_token_id = 0,
-    eos_token_id = 92542,
+    pad_token_id = 2,
+    eos_token_id = 2,
     padding_side = 'left',
+    chat_template = "{% for message in messages %}{% if message['role'] == 'user' %}{{'Human:\n' + message['content'] + '\n'}}{% elif message['role'] == 'assistant' %}{{'Assistant:\n' + message['content'] + '\n'}}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ 'Assistant:\n' }}{% endif %}",
 )
 
 rollout_config = dict(
     write_to_file=False,
     actor_micro_bs=GENERATE_MICRO_BATCH_SIZE,
-    reward_micro_bs=GENERATE_MICRO_BATCH_SIZE,
+    reward_micro_bs=REWARD_MICRO_BATCH_SIZE,
     clip_reward_min=-5,
     clip_reward_max=5,
     max_new_tokens=MAX_ANSWER_LEN,
+    async_reward = True,
     generate_kwargs={
-        "do_sample": True,
-        "temperature": 1.0,
+        "do_sample":True,
+        "temperature":1.0,
         "top_k": 0,
         "top_p": 0.9,
-        "min_new_tokens": 1,
-        "num_beams": 1,
+        "pad_token_id": 2,
+        "eos_token_id": 2,
         "early_stopping": True,
-        "eos_token_id": 92542,
-        "pad_token_id": 0,
-    },
+        "num_beams":1,
+        "min_new_tokens":1,
+    }
 )
 
 repeater_config = dict(
-    actor_micro_bs=AC_INFER_MICRO_BATCH_SIZE,
-    ref_micro_bs=REF_INFER_MICRO_BATCH_SIZE,
-    critic_micro_bs=AC_INFER_MICRO_BATCH_SIZE,
+    actor_micro_bs=INFER_MICRO_BATCH_SIZE,
+    ref_micro_bs=REF_MICRO_BATCH_SIZE,
+    critic_micro_bs=INFER_MICRO_BATCH_SIZE,
     reward_scale=False,
     fine_grained_rm=False,
     value_ema=False,
-    kl_coeff=0.01,
-    gamma=1.0,
-    gae_lambda=0.99,
-    answer_end_id=92542,
-    norm_adv=True,
+    kl_coeff = 0.01,
+    gamma = 1.0,
+    gae_lambda = 0.99,
+    answer_end_id = 2,
+    norm_rewards = True,
 )
 
 train_config = dict(
     ppo_minibatch=DATA_BATCH_SIZE,
     value_minibatch=DATA_BATCH_SIZE,
-    actor_micro_bs=TRAIN_MICRO_BATCH_SIZE,
-    critic_micro_bs=TRAIN_MICRO_BATCH_SIZE,
+    actor_micro_bs=ACTOR_TRAIN_MICRO_BATCH_SIZE,
+    critic_micro_bs=CRITIC_TRAIN_MICRO_BATCH_SIZE,
     pretrain_step=0,
     save_interval=80,
-    step_interval=1,
 )
 
 model_configs = dict(
     actor=dict(
-        model_path="/fs-computility/llm/shared/models/internlm2-chat-20b-sft",
+        model_path="OpenLLMAI/Llama-2-7b-sft-model-ocra-500k",
         model_type="actor",
         trainer_config=dict(
             torch_dtype=MODEL_DTYPE,
@@ -86,20 +88,28 @@ model_configs = dict(
                 loss_type="per_seq",
             ),
             parallel=dict(
-                data=dict(size=ACTOR_DP_SIZE, mode="deepspeed"),
+                data=dict(size=TRAIN_DP_SIZE, mode="deepspeed"),
                 tensor=dict(size=1, mode="1d"),
                 pipeline=dict(size=1, interleaved_overlap=False),
                 sequence=False,
             ),
             deepspeed_config={
-                "bf16": {"enable": False},
+                "bf16": {"enable": True},
                 "fp16": {"enable": False},
                 "zero_optimization": {
                     "stage": ZERO_STAGE,
+                    "reduce_bucket_size": "auto", 
                     "stage3_gather_16bit_weights_on_model_save": True,
-                },
+                    "stage3_prefetch_bucket_size": 1e9,  # default: 5e8
+                }, 
+                "gradient_clipping": 1.0, 
+                "prescale_gradients": False, 
+                "wall_clock_breakdown": False, 
+                "data_types": {
+                    "grad_accum_dtype": "fp32"
+                }, 
                 "gradient_accumulation_steps": ACTOR_GRADIENT_ACC_STEP,
-                "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,
+                "train_micro_batch_size_per_gpu": ACTOR_TRAIN_MICRO_BATCH_SIZE,
             },
         ),
         generator_config=dict(
@@ -114,11 +124,28 @@ model_configs = dict(
         ),
     ),
 
-    critic=dict(
-        model_path="/fs-computility/llm/shared/marl/models/internlm2/20B/hf/R-Gauss_20B-8k-D20240204-v1_hf/",
-        model_type="critic",
+    reference=dict(
+        model_path="OpenLLMAI/Llama-2-7b-sft-model-ocra-500k",
+        model_type="reference",
         trainer_config=dict(
             torch_dtype=MODEL_DTYPE,
+            trainer_type="huggingface",
+            use_flash_attn=True,
+            parallel=dict(
+                data=dict(size=INFER_DP_SIZE, mode="ddp"),
+                tensor=dict(size=1, mode="1d"),
+                pipeline=dict(size=1, interleaved_overlap=False),
+                sequence=False,
+            ),
+        ),
+    ),
+
+    critic=dict(
+        model_path="OpenLLMAI/Llama-2-7b-rm-anthropic_hh-lmsys-oasst-webgpt",
+        model_type="critic",
+        head_name="value_head",
+        trainer_config=dict(
+            torch_dtype="auto",
             trainer_type="huggingface",
             use_flash_attn=True,
             gradient_checkpointing=True,
@@ -130,44 +157,40 @@ model_configs = dict(
                 loss_type="per_seq",
             ),
             parallel=dict(
-                data=dict(size=CRITIC_DP_SIZE, mode="deepspeed"),
+                data=dict(size=TRAIN_DP_SIZE, mode="deepspeed"),
                 tensor=dict(size=1, mode="1d"),
                 pipeline=dict(size=1, interleaved_overlap=False),
                 sequence=False,
             ),
             deepspeed_config={
-                "bf16": {"enable": False},
+                "bf16": {"enable": True},
                 "fp16": {"enable": False},
                 "zero_optimization": {
                     "stage": ZERO_STAGE,
-                },
+                    "reduce_bucket_size": "auto", 
+                    "stage3_gather_16bit_weights_on_model_save": True,
+                    "stage3_prefetch_bucket_size": 1e9,  # default: 5e8
+                }, 
+                "gradient_clipping": 1.0, 
+                "prescale_gradients": False, 
+                "wall_clock_breakdown": False, 
+                "data_types": {
+                    "grad_accum_dtype": "fp32"
+                }, 
                 "gradient_accumulation_steps": CRITIC_GRADIENT_ACC_STEP,
-                "train_micro_batch_size_per_gpu": TRAIN_MICRO_BATCH_SIZE,
+                "train_micro_batch_size_per_gpu": CRITIC_TRAIN_MICRO_BATCH_SIZE,
             },
         ),
     ),
 
     reward=dict(
-        model_path="/fs-computility/llm/shared/marl/models/internlm2/20B/hf/R-Gauss_20B-8k-D20240204-v1_hf/",
+        model_path="OpenLLMAI/Llama-2-7b-rm-anthropic_hh-lmsys-oasst-webgpt",
         model_type="reward",
+        head_name="value_head",
         trainer_config=dict(
             torch_dtype=MODEL_DTYPE,
             trainer_type="huggingface",
-            parallel=dict(
-                data=dict(size=INFER_DP_SIZE, mode="ddp"),
-                tensor=dict(size=1, mode="1d"),
-                pipeline=dict(size=1, interleaved_overlap=False),
-                sequence=False,
-            ),
-        ),
-    ),
-
-    reference=dict(
-        model_path="/fs-computility/llm/shared/models/internlm2-chat-20b-sft",
-        model_type="reference",
-        trainer_config=dict(
-            torch_dtype=MODEL_DTYPE,
-            trainer_type="huggingface",
+            use_flash_attn=True,
             parallel=dict(
                 data=dict(size=INFER_DP_SIZE, mode="ddp"),
                 tensor=dict(size=1, mode="1d"),

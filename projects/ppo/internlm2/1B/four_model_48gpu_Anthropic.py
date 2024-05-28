@@ -83,7 +83,8 @@ model_configs=dict(
                     "reduce_bucket_size": "auto", 
                     "zero_hpz_partition_size": 1, 
                     "zero_quantized_weights": False, 
-                    "zero_quantized_gradients": False
+                    "zero_quantized_gradients": False,
+                    "stage3_gather_16bit_weights_on_model_save": True,
                 }, 
                 "bf16": {
                     "enabled": True
@@ -194,6 +195,6 @@ dataset_config = {
         "random_seed": 1024,
         "ppo_datas": [
             "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/new_arrow_messages_data/Anthropic_hh-rlhf_helpful-base-train.json::1.0",
-            "/cpfs01/shared/public/public_hdd/lishuaibin/ppo_data/new_arrow_messages_data/Anthropic_hh-rlhf_harmless-base-train.json::0.5",
+            "Anthropic/hh-rlhf/harmless-base::0.5",
             ],
     }

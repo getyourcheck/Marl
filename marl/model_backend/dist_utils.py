@@ -11,9 +11,7 @@ from torch.distributed.distributed_c10d import (
     rendezvous,
 )
 
-
-# Copy from pytorch to allow creating multiple main groups.
-# https://github.com/pytorch/pytorch/blob/main/torch/distributed/distributed_c10d.py
+# Adapted from https://github.com/pytorch/pytorch/blob/main/torch/distributed/distributed_c10d.py
 def init_process_group(
     backend: Union[str, Backend] = None,
     init_method: Optional[str] = None,

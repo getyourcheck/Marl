@@ -46,9 +46,9 @@ if __name__ == "__main__":
     }
 
     # init model
-    from marl.config import Config
+    from marl.config.config import Config
     from marl.model_backend.hf_model_runner import HfModelRunner
-    from marl.config_consts import ENGINE_HUGGINGFACE
+    from marl.config.config_consts import ENGINE_HUGGINGFACE
     trainer_config = Config(
         dict(
             model_path="internlm/internlm2-chat-1_8b-sft",
@@ -88,7 +88,7 @@ if __name__ == "__main__":
     actor_model = HfModelRunner(model_config=trainer_config)
     actor_model.initialize()
     # reward model 
-    from marl.config_consts import MODEL_TYPE_REWARD, ENGINE_HUGGINGFACE
+    from marl.config.config_consts import MODEL_TYPE_REWARD, ENGINE_HUGGINGFACE
     reward_trainer_config = Config(
         dict(
             model_path="/cpfs01/shared/public/llm_model/ckpt/Luyou_1B/R-Luyou-1B-8k-D20240130-v1-hf/",
@@ -105,7 +105,7 @@ if __name__ == "__main__":
     reward_model = HfModelRunner(model_config=reward_trainer_config)
     reward_model.initialize()
     # critic model
-    from marl.config_consts import MODEL_TYPE_CRITIC, ENGINE_HUGGINGFACE
+    from marl.config.config_consts import MODEL_TYPE_CRITIC, ENGINE_HUGGINGFACE
     critic_trainer_config = Config(
         dict(
             model_path="/cpfs01/shared/public/llm_model/ckpt/Luyou_1B/R-Luyou-1B-8k-D20240130-v1-hf/",

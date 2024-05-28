@@ -2,7 +2,7 @@ import ray
 import torch
 import pytest
 from marl.coordinator import Coordinator
-from marl.config import Config
+from marl.config.config import Config
 from marl.model_backend.cuda_memory_stats import (
     CudaMemoryStats,
     merge_cuda_memory_stats_list,

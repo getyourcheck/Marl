@@ -25,6 +25,7 @@ venv.bak/
 .mypy_cache/
 
 # Custom
+data/
 logs/
 drafts/
 wandb/

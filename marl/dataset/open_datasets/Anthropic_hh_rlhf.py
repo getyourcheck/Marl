@@ -44,8 +44,8 @@ class AnthropicHhrlhf(Dataset):
             data_dir = None
         else:
             data_dir = parts[-1]
-        if os.path.exists(path):
-            raw_datasets = datasets.load_from_disk(path)
+        if os.path.exists("data/" + path):
+            raw_datasets = datasets.load_from_disk("data/" + path)
         else:
             print(f"loading Anthropic/hh-rlhf data_dir={data_dir} from huggingface ...")
             raw_datasets = datasets.load_dataset('Anthropic/hh-rlhf', data_dir=data_dir, trust_remote_code=True)

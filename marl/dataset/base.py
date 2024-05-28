@@ -3,8 +3,9 @@
 import gzip
 import json
 import random
+import numpy as np
 from contextlib import contextmanager
-from torch.utils.data import IterableDataset
+from torch.utils.data import IterableDataset, ConcatDataset, Dataset, Subset
 
 
 @contextmanager
@@ -41,9 +42,28 @@ class InfiniteDataset(IterableDataset):
 class FileDataset(IterableDataset):
     """Single json file dataset."""
 
-    def __init__(self, filename, tokenizer):
+    def __init__(self, filename, tokenizer, sys_meta="default", rm_meta="default"):
         self._filename = filename
         self.tokenizer = tokenizer
+        self.data_list = []
+        self.sys_meta = sys_meta
+        self.rm_meta = rm_meta
+        with open_file(self._filename) as fin:
+            for lineno, line in enumerate(fin):
+                data = json.loads(line)
+                self.data_list.append(data)
+
+    def __len__(self):
+        return len(self.data_list)
+
+    def __getitem__(self, index: int):
+        data = self.data_list[index]
+        try:
+            self.tokenizer.apply_chat_template(data, tokenize=True)
+            return {"data": data, "sys_meta": self.sys_meta, "rm_meta": self.rm_meta}
+        except:
+            print(f"[data tokenize check] skip dirty data: {data}")
+            return None
 
     def __iter__(self):
         with open_file(self._filename) as fin:
@@ -56,15 +76,17 @@ class FileDataset(IterableDataset):
                     continue
                 if data is None:
                     continue
-                yield data
+                yield {"data": data, "sys_meta": self.sys_meta, "rm_meta": self.rm_meta}
 
 
 class OpensourceDataset(IterableDataset):
     """Opensource dataset."""
 
-    def __init__(self, filename, tokenizer):
+    def __init__(self, filename, tokenizer, sys_meta="default", rm_meta="default"):
         self._filename = filename
         self.tokenizer = tokenizer
+        self.sys_meta = sys_meta
+        self.rm_meta = rm_meta
         assert "Anthropic" in filename or "openai" in filename, "[Coming soon] currently only support loading Anthropic and openai opensource datasets..."
         if "Anthropic" in filename:
             from .open_datasets.Anthropic_hh_rlhf import AnthropicHhrlhf
@@ -73,6 +95,18 @@ class OpensourceDataset(IterableDataset):
             pass
         else:
             raise NotImplementedError()
+
+    def __len__(self):
+        return len(self.data_list)
+
+    def __getitem__(self, index: int):
+        data = self.data_list[index]
+        try:
+            self.tokenizer.apply_chat_template(data, tokenize=True)
+            return {"data": data, "sys_meta": self.sys_meta, "rm_meta": self.rm_meta}
+        except:
+            print(f"[data tokenize check] skip dirty data: {data}")
+            return None
 
     def __iter__(self):
         for lineno, data in enumerate(self.data_list):
@@ -83,13 +117,13 @@ class OpensourceDataset(IterableDataset):
             except:
                 print(f"[data tokenize check] skip dirty data: {data}")
                 continue
-            yield data
+            yield {"data": data, "sys_meta": self.sys_meta, "rm_meta": self.rm_meta}
 
 
 class MultiSourceDatset(IterableDataset):
     """Multiple source dataset."""
 
-    def __init__(self, task_groups, sub_dataset_type="file", tokenizer=None, random_seed=1024):
+    def __init__(self, task_groups, sub_dataset_type="file", tokenizer=None, random_seed=1024, ratio_within_datas=True):
         self._task_group = []
         for _task in task_groups:
             file_path, extra_info = _task.split("::")[0], _task.split("::")[1]
@@ -110,34 +144,57 @@ class MultiSourceDatset(IterableDataset):
             for task in self._task_group:
                 filepath = task["filepath"]
                 if ".json" in filepath:
-                    task["dataset"] = FileDataset(filepath, tokenizer)
+                    task["dataset"] = FileDataset(filepath, tokenizer, task["sys_meta"], task["rm_meta"])
                 else:
                     # loading opensource datasets
                     print(f"Try loading {filepath} from huggingface ...")
-                    task["dataset"] = OpensourceDataset(filepath, tokenizer)
+                    task["dataset"] = OpensourceDataset(filepath, tokenizer, task["sys_meta"], task["rm_meta"])
         else:
             raise NotImplementedError("Cannot support filelist now.")
-        sum_prob = sum([task["prob"] for task in self._task_group])
-        for task in self._task_group:
-            task["prob"] = task["prob"] / sum_prob
-
+        
         self.random_seed = random_seed
+        self.ratio_within_datas = ratio_within_datas
+
+        if self.ratio_within_datas:
+            sum_prob = sum([task["prob"] for task in self._task_group])
+            for task in self._task_group:
+                task["prob"] = task["prob"] / sum_prob
+        else:
+            datasets = []
+            for i, task in enumerate(self._task_group):
+                task["dataset"] = self._get_subset_by_ratio(task["dataset"], task["prob"], random_seed)
+                datasets.append(task["dataset"])
+
+            self.all_dataset = ConcatDataset(datasets) 
+            self.iter_all_dataset = iter(self.all_dataset)
+
+    def _get_subset_by_ratio(self, dataset: Dataset, ratio: float, seed: int):
+        np_random = np.random.RandomState(seed)
+        indices = np.arange(len(dataset))
+        np_random.shuffle(indices)
+        subset_indices = indices[: int(len(dataset) * ratio)]
+        subset_indices = list(subset_indices)
+        return Subset(dataset, subset_indices)
 
     def __iter__(self):
         """ sample data one task by probs
         """
-        rng = random.Random(self.random_seed)
-        probs = [task["prob"] for task in self._task_group]
-        # Initialize task iterator
-        for task in self._task_group:
-            task["iterator"] = iter(task["dataset"])
-        while True:
-            task = rng.choices(self._task_group, weights=probs)[0]
-            try:
-                yield from task["iterator"]
-            except StopIteration:
+        if self.ratio_within_datas:
+            rng = random.Random(self.random_seed)
+            probs = [task["prob"] for task in self._task_group]
+            # Initialize task iterator
+            for task in self._task_group:
                 task["iterator"] = iter(task["dataset"])
-                yield from task["iterator"]
+            while True:
+                task = rng.choices(self._task_group, weights=probs)[0]
+                try:
+                    yield from task["iterator"]
+                except StopIteration:
+                    task["iterator"] = iter(task["dataset"])
+                    yield from task["iterator"]
+        else:
+            yield next(self.iter_all_dataset)
+
 
 
 if __name__ == "__main__":
@@ -147,7 +204,7 @@ if __name__ == "__main__":
                         "./data/ppo_data/ppo_data_1.json::0.1[REWARD_META]:cn-safety",
                         "./data/ppo_data/ppo_data_1.json::0.1",
                         "./data/ppo_data/ppo_data_1.json::0.0",
-                        "Anthropic/hh-rlhf::0.5"
+                        # "Anthropic/hh-rlhf::0.5"
                         ],
         "max_seq_len": 4096,
         "num_samples_each_epoch": 8,
@@ -160,9 +217,10 @@ if __name__ == "__main__":
     model_path = "/fs-computility/llm/shared/marl/models/internlm2/1.8B/hf/Luyou_1B_FT_0.19_130_avg5/"
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 
-    example_dataset = iter(MultiSourceDatset(
+    example_dataset = MultiSourceDatset(
         task_groups=dataset_config["task_groups"],
         sub_dataset_type="file",
         tokenizer=tokenizer
-    ))
-    print(next(example_dataset))
+    )
+    for i, data in enumerate(example_dataset):
+        print(i, len(data))

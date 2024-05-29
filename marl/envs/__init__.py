@@ -1,1 +1,3 @@
-from marl.envs.txt_env import *
+from .txt_env import TxtEnv
+
+__all__ = ['TxtEnv']

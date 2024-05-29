@@ -2,14 +2,11 @@ import uuid
 from typing import TypeVar
 
 from ray.util.placement_group import PlacementGroup
-from ray.util.scheduling_strategies import (
-    PlacementGroupSchedulingStrategy,
-)
-
+from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 DEFAULT_NUM_CPUS = 1
 DEFAULT_NUM_GPUS = 1
-T = TypeVar("T")
+T = TypeVar('T')
 UUID = uuid.uuid4()  # may called multiple times in different ray instances
 
 
@@ -23,8 +20,8 @@ def create_ray_actors(
     ray_actors = [_ for _ in range(placement_group.bundle_count)]
     for index in range(placement_group.bundle_count):
         ray_actors[index] = trainer_class.options(
-            name=f"{name_prefix}_rank_{index}",
-            namespace=f"{UUID}_{trainer_class.__class__.__name__}",
+            name=f'{name_prefix}_rank_{index}',
+            namespace=f'{UUID}_{trainer_class.__class__.__name__}',
             scheduling_strategy=PlacementGroupSchedulingStrategy(
                 placement_group=placement_group,
                 placement_group_bundle_index=index,
@@ -33,8 +30,7 @@ def create_ray_actors(
         ).remote(config)
     return ray_actors
 
+
 def set_runtime_env():
-    runtime_env = {
-        "env_vars": {"HF_ENDPOINT": "https://hf-mirror.com"}
-    }
+    runtime_env = {'env_vars': {'HF_ENDPOINT': 'https://hf-mirror.com'}}
     return runtime_env

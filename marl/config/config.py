@@ -1,5 +1,5 @@
+# flake8: noqa: E501
 #!/usr/bin/env python
-# -*- encoding: utf-8 -*-
 
 # Adapted from https://github.com/hpcaitech/ColossalAI/blob/main/colossalai/context/config.py
 
@@ -27,13 +27,13 @@ class Config(dict):
 
     def __getattr__(self, key):
         try:
-            value = super(Config, self).__getitem__(key)
+            value = super().__getitem__(key)
             return value
         except KeyError:
             raise AttributeError(key)
 
     def __setattr__(self, key, value):
-        super(Config, self).__setitem__(key, value)
+        super().__setitem__(key, value)
 
     def _add_item(self, key, value):
         if isinstance(value, dict):
@@ -42,14 +42,17 @@ class Config(dict):
             self.__setattr__(key, value)
 
     def update(self, config):
-        assert isinstance(config, (Config, dict)), "can only update dictionary or Config objects."
+        assert isinstance(
+            config,
+            (Config, dict)), 'can only update dictionary or Config objects.'
         for k, v in config.items():
             self._add_item(k, v)
         return self
 
     @staticmethod
     def from_file(filename: str):
-        """Reads a python file and constructs a corresponding :class:`Config` object.
+        """Reads a python file and constructs a corresponding :class:`Config`
+        object.
 
         Args:
             filename (str): Name of the file to construct the return object.
@@ -67,11 +70,12 @@ class Config(dict):
         elif isinstance(filename, Path):
             filepath = filename.absolute()
 
-        assert filepath.exists(), f"{filename} is not found, please check your configuration path"
+        assert filepath.exists(
+        ), f'{filename} is not found, please check your configuration path'
 
         # check extension
         extension = filepath.suffix
-        assert extension == ".py", "only .py files are supported"
+        assert extension == '.py', 'only .py files are supported'
 
         # import the config as module
         remove_path = False
@@ -80,14 +84,15 @@ class Config(dict):
             remove_path = True
 
         module_name = filepath.stem
-        source_file = SourceFileLoader(fullname=str(module_name), path=str(filepath))
+        source_file = SourceFileLoader(
+            fullname=str(module_name), path=str(filepath))
         module = source_file.load_module()
 
         # load into config
         config = Config()
 
         for k, v in module.__dict__.items():
-            if k.startswith("__") or inspect.ismodule(v) or inspect.isclass(v):
+            if k.startswith('__') or inspect.ismodule(v) or inspect.isclass(v):
                 continue
             else:
                 config._add_item(k, v)

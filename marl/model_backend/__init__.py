@@ -1,1 +1,0 @@
-# Lazy import the Worker to avoid importing torch.cuda/xformers

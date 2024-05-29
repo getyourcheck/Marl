@@ -5,7 +5,7 @@ MB_SHIFT = 20
 
 
 class CudaMemoryStats(dict):
-    # see: https://pytorch.org/docs/stable/generated/torch.cuda.memory_stats.html
+    # see: https://pytorch.org/docs/stable/generated/torch.cuda.memory_stats.html  # noqa: E501
     # def add_memory_stats(self, key, device):
     #     import torch
     #     status = torch.cuda.memory_stats(device=device)
@@ -17,7 +17,7 @@ class CudaMemoryStats(dict):
 
     @property
     def total_current_bytes(self):
-        CURRENT_BYTE_KEY = "allocated_bytes.all.current"
+        CURRENT_BYTE_KEY = 'allocated_bytes.all.current'
         total = 0
         for _, v in self.items():
             total += v.get(CURRENT_BYTE_KEY, 0)
@@ -33,15 +33,16 @@ class CudaMemoryStats(dict):
 
     @property
     def avg_current_bytes(self):
-        return self.total_current_bytes / self.num_gpus if self.num_gpus != 0 else 0
+        return self.total_current_bytes / self.num_gpus if self.num_gpus != 0 else 0  # noqa: E501
 
     def __repr__(self):
-        return f"CudaMemoryStats: {self.num_gpus} GPU takes {self.total_current_mb} MiB"
+        return f'CudaMemoryStats: {self.num_gpus} GPU takes {self.total_current_mb} MiB'  # noqa: E501
 
 
-def merge_cuda_memory_stats_list(dict_list: list[CudaMemoryStats]) -> CudaMemoryStats:
+def merge_cuda_memory_stats_list(
+        dict_list: list[CudaMemoryStats]) -> CudaMemoryStats:
     if isinstance(dict_list, CudaMemoryStats):
-        logger.warning("dict_list is a CudaMemoryStatus instead of a list")
+        logger.warning('dict_list is a CudaMemoryStatus instead of a list')
         return dict_list
     memory_stats_dict: CudaMemoryStats = dict_list[0]
     assert isinstance(memory_stats_dict, CudaMemoryStats)

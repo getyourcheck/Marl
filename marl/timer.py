@@ -1,10 +1,10 @@
-from loguru import logger
 import time
 
+from loguru import logger
+
+
 class Timer:
-    """
-    Timer
-    """
+    """Timer."""
 
     def __init__(self, task_name: str):
         self.task_name = task_name
@@ -18,9 +18,10 @@ class Timer:
         self.end()
 
     def start(self):
-        logger.info(f"Start {self.task_name}")
+        logger.info(f'Start {self.task_name}')
         self.start = time.time()
 
     def end(self):
         self.duration = time.time() - self.start
-        logger.info(f"  End {self.task_name}, duration = {self.duration:.2f} seconds")
+        logger.info(
+            f'  End {self.task_name}, duration = {self.duration:.2f} seconds')

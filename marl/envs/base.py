@@ -1,39 +1,12 @@
-from abc import abstractmethod
+class EnvBase:
+    """`EnvBase` is the base class of different environments.
 
-# import gym
-import numpy as np
-from torch.utils.data import IterableDataset
-
-
-# class BaseEnv(gym.Env):
-class BaseEnv(object):
-    """
-    A base class for all the environments
+    `env` is responsible to generate the trajectory data.
     """
 
-    def __init__(self, dataloader: IterableDataset, reward_function=None, ):
-        """
-        Args:
-            dataloader (IterableDataset): generate rl data iteratively
-            reward_function: reward function that computes scalar reward for each episode
-        """
-        self.dataloader = dataloader
-        self.rm_fc = rm_fc
+    def __init__(self):
+        pass
 
-    @abstractmethod
-    def rollout(self, policy, episodes=1):
-
+    def rollout(self, *args, **kwargs):
+        """define rollout."""
         raise NotImplementedError
-
-    # Standard gym methods
-    @abstractmethod
-    def step(self, action):
-        pass
-
-    @abstractmethod
-    def render(self):
-        pass
-
-    @abstractmethod
-    def close(self):
-        pass

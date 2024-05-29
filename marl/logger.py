@@ -3,9 +3,11 @@
 """Logging configuration."""
 import logging
 import sys
+from functools import wraps
+from time import perf_counter
 
-_FORMAT = "%(levelname)s %(asctime)s %(filename)s:%(lineno)d] %(message)s"
-_DATE_FORMAT = "%m-%d %H:%M:%S"
+_FORMAT = '%(levelname)s %(asctime)s %(filename)s:%(lineno)d] %(message)s'
+_DATE_FORMAT = '%m-%d %H:%M:%S'
 
 
 class NewLineFormatter(logging.Formatter):
@@ -16,13 +18,13 @@ class NewLineFormatter(logging.Formatter):
 
     def format(self, record):
         msg = logging.Formatter.format(self, record)
-        if record.message != "":
+        if record.message != '':
             parts = msg.split(record.message)
-            msg = msg.replace("\n", "\r\n" + parts[0])
+            msg = msg.replace('\n', '\r\n' + parts[0])
         return msg
 
 
-_root_logger = logging.getLogger("marl")
+_root_logger = logging.getLogger('marl')
 _default_handler = None
 
 
@@ -56,10 +58,6 @@ def init_logger(name: str):
     return logger
 
 
-from functools import wraps
-from time import perf_counter
-
-
 def log_decorator(logger):
     """
     Usage:
@@ -70,20 +68,23 @@ def log_decorator(logger):
     """
 
     def decorator(func):
+
         @wraps(func)
         def wrapper(*args, **kwargs):
-            logger.info(f"----------- LOG DECORATOR -----------")
-            logger.info(f"CALLED {func.__name__} ARGS: {args}; KWARGS:{kwargs}")
+            logger.info('----------- LOG DECORATOR -----------')
+            logger.info(
+                f'CALLED {func.__name__} ARGS: {args}; KWARGS:{kwargs}')
             bgn = perf_counter()
             try:
                 result = func(*args, **kwargs)
                 end = perf_counter()
                 dur = end - bgn
-                logger.info(f"{func.__name__} RESULT: {result}; DURATION: {dur:4f}s")
+                logger.info(
+                    f'{func.__name__} RESULT: {result}; DURATION: {dur:4f}s')
                 return result
             except Exception as e:
-                logger.exception(f"{func.__name__}: {e}")
-                logger.info(f"----------- LOG DECORATOR -----------")
+                logger.exception(f'{func.__name__}: {e}')
+                logger.info('----------- LOG DECORATOR -----------')
 
         return wrapper
 

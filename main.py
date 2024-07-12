@@ -139,7 +139,11 @@ if __name__ == '__main__':
 
             ppo_loss, pt_loss = None, None
             if critic_warmup_step <= 0:
-                ppo_loss, pt_loss = ppo.policy_learn(trajectories, pretrain_data=next(pretrain_data_iter))
+                if resume_step > 0:
+                    for _ in range(resume_step):
+                        pretrain_data=next(pretrain_data_iter) if pretrain_data_iter is not None else None
+                    resume_step = -1
+                ppo_loss, pt_loss = ppo.policy_learn(trajectories, pretrain_data=pretrain_data)
                 logger_train.info(
                     f'[Policy Train] Step: {step}, '
                     f'ppo loss: {ppo_loss}, pretrain loss: {pt_loss}')

@@ -92,7 +92,9 @@ def batch_collate_fn(batch, max_length, batch_size):
     return {"input_ids": input_ids, "labels": labels, "attention_mask": attention_mask}
 
 
-def get_pretrain_data(folder, packed=True, max_length=8192, batch_size=32, seed=1024, file_type='.bin', min_length=0, shuffle=True):
+def get_pretrain_data(folder=None, packed=True, max_length=8192, batch_size=32, seed=1024, file_type='.bin', min_length=0, shuffle=True):
+    if (folder is None) or (batch_size <= 0):
+        return None
     import functools
     from torch.utils.data import DataLoader
     dataset_cfg = dict(
@@ -147,10 +149,10 @@ if __name__ == "__main__":
             batch_size=32,
     )
 
-
+    # pretrain_dataset_config = {}
     pretrain_data_iterator = get_pretrain_data(**pretrain_dataset_config)
 
-    pretrain_data = next(pretrain_data_iterator)
+    pretrain_data = next(pretrain_data_iterator) if pretrain_data_iterator is not None else None
 
     import numpy as np
     import torch

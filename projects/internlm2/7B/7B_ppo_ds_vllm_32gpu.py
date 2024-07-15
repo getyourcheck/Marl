@@ -25,8 +25,6 @@ vllm_tp_size = 2
 policy_model_path = '/fs-computility/llm/shared/marl/models/internlm2/7B/hf/sft_ampere_7B_3.0.0_FT_0.19rc14_32k-3920_hf/'
 reward_model_path = '/fs-computility/llm/shared/marl/models/internlm2/7B/hf/R-Ampere-7B-8k-D20240318-v1-868_hf/'
 
-CRITIC_GRADIENT_ACC_STEP = PROMPT_BATCH_SIZE // CRITIC_DP_SIZE // TRAIN_MICRO_BATCH_SIZE  # noqa: E501
-
 
 MODEL_DTYPE = 'auto'
 

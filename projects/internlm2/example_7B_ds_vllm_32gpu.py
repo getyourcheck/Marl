@@ -1,85 +1,19 @@
+# 主要修改内容：数据集配置。【！！！当不使用pretrain数据时，需设置 PRETRAIN_BATCH_SIZE=0 】
 #######################################################################
-#                              Settings                               #
+#                            数据集  Settings                         #
 #######################################################################
-MAX_PROMPT_LEN = 1024
-MAX_ANSWER_LEN = 1024
-MAX_PRETRAIN_LEN = 8192
 
-PROMPT_BATCH_SIZE = 512
-PRETRAIN_BATCH_SIZE = 256
-
-GENERATE_MICRO_BATCH_SIZE = 8
-INFER_MICRO_BATCH_SIZE = 8
-TRAIN_MICRO_BATCH_SIZE = 1
-
-ZERO_STAGE = 3
-POLICY_DP_SIZE = 8
-reference_dp_size = 8
-CRITIC_DP_SIZE = 8
-reward_dp_size = 4
-use_flash_attn = True
-gradient_checkpointing = True
-vllm_dp_size = 2
-vllm_tp_size = 2
-
-policy_model_path = '/fs-computility/llm/shared/marl/models/internlm2/20B/hf/internlm2-chat-20b-sft/'
-reward_model_path = '/fs-computility/llm/shared/marl/models/internlm2/20B/hf/R-Gauss_20B-8k-D20240204-v1_hf/'
-
-
-MODEL_DTYPE = 'auto'
-
-tokenizer_config = dict(
-    pad_token_id=0,
-    eos_token_id=92542,
-    padding_side='left',
-)
-
-rollout_config = dict(
-    policy_micro_bs=GENERATE_MICRO_BATCH_SIZE,
-    reward_micro_bs=GENERATE_MICRO_BATCH_SIZE,
-    max_new_tokens=MAX_ANSWER_LEN,
-    write_to_file=True,
-    generate_kwargs={
-        'do_sample': True,
-        'temperature': 1.0,
-        'top_k': 0,
-        'top_p': 0.9,
-        'min_new_tokens': 1,
-        'num_beams': 1,
-        'early_stopping': True,
-        'eos_token_id': 92542,
-        'pad_token_id': 0,
-    },
-)
-
-repeater_config = dict(
-    policy_micro_bs=INFER_MICRO_BATCH_SIZE,
-    critic_micro_bs=INFER_MICRO_BATCH_SIZE,
-    ref_micro_bs=INFER_MICRO_BATCH_SIZE,
-    kl_coeff=0.01,
-    gamma=1.0,
-    gae_lambda=0.99,
-    clip_reward_min=-5,
-    clip_reward_max=5,
-    norm_rewards=True,
-)
-
-train_config = dict(
-    policy_micro_bs=TRAIN_MICRO_BATCH_SIZE,
-    critic_micro_bs=TRAIN_MICRO_BATCH_SIZE,
-    ppo_loss_weight=1.0,
-    pretrain_loss_weight=0.5,
-    critic_warmup_step=40,
-    save_interval=40,
-    max_train_step=400,
-)
+# 1. Prompt ppo数据配置
+MAX_PROMPT_LEN = 1024     # prompt token长度设置
+MAX_ANSWER_LEN = 1024     # answer token长度设置
+PROMPT_BATCH_SIZE = 512   # prompt batch size
 
 prompt_dataset_config = dict(
     samples_each_epoch=PROMPT_BATCH_SIZE,
     max_len=MAX_PROMPT_LEN,
     message_type='prompt',
     random_seed=1024,
-    sample_strategy='in_batch',  # 'in_data'
+    sample_strategy='in_batch',  # 'in_data' [数据采样方式，in_batch表示一个batch内按不同数据集比例采样，in_data表示按各自数据集内采样比例抽取数据后组成最终的dataloader]
     message_datasets=[
         "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/Anthropic_hh-rlhf_harmless-base-train.json::0.39471242181845173",
         "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/Anthropic_hh-rlhf_helpful-base-train.json::1.0169169094857184",
@@ -122,38 +56,109 @@ prompt_dataset_config = dict(
         "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/airoboros_reward_ocra_math.json::0.32274827861398264",
     ])
 
-# pretrain_dataset_config = dict(
-#     samples_each_epoch=PRETRAIN_BATCH_SIZE,
-#     max_len=MAX_PRETRAIN_LEN,
-#     message_type='pretrain',
-#     random_seed=1024,
-#     sample_strategy='in_batch',  # 'in_data'
-#     message_datasets=[
-#         './demo_datas/pretrain_data.json::0.01',
-#         '[HF]Anthropic/hh-rlhf/helpful-base::0.5',
-#         '[HF]HuggingFaceH4/summarize_from_feedback::0.5',
-#     ],
-# )
+# 2. Pretrain 数据配置
+PRETRAIN_BATCH_SIZE = 0 # 256 # pretrain batch size ！！！ 不使用pretrain数据时，需设置为 0
+MAX_PRETRAIN_LEN = 8192 # pretrain数据 token长度设置
+
 pretrain_dataset_config = dict(
         folder='/fs-computility/llm/shared/zhaoqian/dataset/pretrain/1226-mix-v13-complete-watermark-pjx50/train',
-        packed=False,
+        packed=False, # WIP: 暂不支持 packed data。 SP开发中
         max_length=MAX_PRETRAIN_LEN,
         batch_size=PRETRAIN_BATCH_SIZE,
 )
 
+#######################################################################
+#                            训练  Settings                         #
+#######################################################################
+ZERO_STAGE = 3
+use_flash_attn = True
+gradient_checkpointing = True
 
+# 训练卡数配置
+POLICY_DP_SIZE = 8          # policy model dp数
+CRITIC_DP_SIZE = 8          # critic model dp 数
+reference_dp_size = 8       # reference model dp 数（仅用于 infer）
+reward_dp_size = 4          # reward model dp 数（仅用于 infer）
+# vllm 推理卡数配置
+vllm_dp_size = 2
+vllm_tp_size = 2
+
+GENERATE_MICRO_BATCH_SIZE = 8
+INFER_MICRO_BATCH_SIZE = 8
+TRAIN_MICRO_BATCH_SIZE = 1
+policy_model_path = '/fs-computility/llm/shared/marl/models/internlm2/7B/hf/sft_ampere_7B_3.0.0_FT_0.19rc14_32k-3920_hf/'
+reward_model_path = '/fs-computility/llm/shared/marl/models/internlm2/7B/hf/R-Ampere-7B-8k-D20240318-v1-868_hf/'
+
+
+#######################################################################
+#                            其余  Settings                           #
+#######################################################################
+# 1. tokenizer 设置，默认从 policy_model_path load
+tokenizer_config = dict(
+    # tokenizer_path='/fs-computility/llm/shared/marl/models/internlm2/7B/hf/sft_ampere_7B_3.0.0_FT_0.19rc14_32k-3920_hf/',
+    pad_token_id=0,
+    eos_token_id=92542,
+    padding_side='left',
+)
+# 2. policy rollout trajectory 
+rollout_config = dict(
+    policy_micro_bs=GENERATE_MICRO_BATCH_SIZE,
+    reward_micro_bs=GENERATE_MICRO_BATCH_SIZE,
+    max_new_tokens=MAX_ANSWER_LEN,
+    write_to_file=True,
+    generate_kwargs={
+        'do_sample': True,
+        'temperature': 1.0,
+        'top_k': 0,
+        'top_p': 0.9,
+        'min_new_tokens': 1,
+        'num_beams': 1,
+        'early_stopping': True,
+        'eos_token_id': 92542,
+        'pad_token_id': 0,
+    },
+)
+# 3. repeater 设置，处理trajectory操作
+repeater_config = dict(
+    policy_micro_bs=INFER_MICRO_BATCH_SIZE,
+    critic_micro_bs=INFER_MICRO_BATCH_SIZE,
+    ref_micro_bs=INFER_MICRO_BATCH_SIZE,
+    kl_coeff=0.01,
+    gamma=1.0,
+    gae_lambda=0.99,
+    clip_reward_min=-5,
+    clip_reward_max=5,
+    norm_rewards=True,
+)
+# 4. train 设置
+policy_lr=1e-6
+critic_lr=5e-6
+
+train_config = dict(
+    policy_micro_bs=TRAIN_MICRO_BATCH_SIZE,
+    critic_micro_bs=TRAIN_MICRO_BATCH_SIZE,
+    ppo_loss_weight=1.0,                    # prompt-ppo loss weight
+    pretrain_loss_weight=0.5,               # pretrain loss weight
+    critic_warmup_step=40,                  # critic model 热启step
+    save_interval=40,                       # 每隔 save_interval 步保存一次模型
+    max_train_step=400,                     # 最大训练步数
+)
+
+#######################################################################
+#                            models 默认配置                           #
+#######################################################################
 model_configs = dict(
     policy=dict(
         model_path=policy_model_path,
         model_type='policy',
         trainer_config=dict(
-            torch_dtype=MODEL_DTYPE,
+            torch_dtype='auto',
             trainer_type='huggingface',
             use_flash_attn=use_flash_attn,
             gradient_checkpointing=gradient_checkpointing,
             train_kwargs=dict(
                 micro_bsz=1,
-                lr=1e-6,
+                lr=policy_lr,
                 total_steps=1e9,
                 lr_decay_rate=1,
             ),
@@ -205,13 +210,13 @@ model_configs = dict(
         model_type='critic',
         # head_name=['v_head', ],
         trainer_config=dict(
-            torch_dtype=MODEL_DTYPE,
+            torch_dtype='auto',
             trainer_type='huggingface',
             use_flash_attn=use_flash_attn,
             gradient_checkpointing=gradient_checkpointing,
             train_kwargs=dict(
                 micro_bsz=1,
-                lr=5e-6,
+                lr=critic_lr,
                 total_steps=1e9,
                 lr_decay_rate=1,
             ),
@@ -252,7 +257,7 @@ model_configs = dict(
         model_path=policy_model_path,
         model_type='reference',
         trainer_config=dict(
-            torch_dtype=MODEL_DTYPE,
+            torch_dtype='auto',
             trainer_type="huggingface",
             parallel=dict(
                 data=dict(size=reference_dp_size, mode="deepspeed"),
@@ -291,7 +296,7 @@ model_configs = dict(
         model_type='reward',
         # head_name=['v_head', ],
         trainer_config=dict(
-            torch_dtype=MODEL_DTYPE,
+            torch_dtype='auto',
             trainer_type="huggingface",
             parallel=dict(
                 data=dict(size=reward_dp_size, mode="deepspeed"),

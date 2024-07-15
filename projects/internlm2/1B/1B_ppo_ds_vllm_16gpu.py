@@ -25,8 +25,6 @@ vllm_tp_size = 1
 policy_model_path = '/fs-computility/llm/shared/marl/models/internlm2/1.8B/hf/internlm2-chat-1_8b-sft/'
 reward_model_path = '/fs-computility/llm/shared/marl/models/internlm2/1.8B/hf/R-Luyou-1B-8k-D20240130-v1/819_hf_bf16/'
 
-CRITIC_GRADIENT_ACC_STEP = PROMPT_BATCH_SIZE // CRITIC_DP_SIZE // TRAIN_MICRO_BATCH_SIZE  # noqa: E501
-
 
 MODEL_DTYPE = 'auto'
 

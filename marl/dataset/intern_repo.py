@@ -1,6 +1,7 @@
 # adapted from https://github.com/InternLM/xtuner/blob/main/xtuner/dataset/intern_repo.py
 
 from xtuner.dataset.intern_repo import *
+from xtuner.dataset.collate_fns.default_collate_fn import default_collate_fn
 
 
 def build_dataset_rank0(dataset_cfg, packed=True, max_length=8192, seed=1024):
@@ -39,32 +40,53 @@ def build_dataset(*args, **kwargs):
     return objects[0]
 
 
-def packed_collate_fn(batch, max_length, batch_size):
-    input_ids, labels, cumulative_len, position_ids, ts = [], [], [], [], []
+def packed_collate_fn(batch, max_length, batch_size, use_varlen_attn=True):
+    input_ids, position_ids, labels = [], [], []
+    attention_mask = []
+    cumulative_len, max_seqlen = [], []
     for b in batch:
         assert (len(b["input_ids"]) == max_length)
         assert (len(b["labels"]) == max_length)
         assert (len(b["position_ids"]) == max_length)
 
-        input_id = [abs(w) for w in b["input_ids"]]
-        label = [w if w > 0 else -100 for w in b["labels"]]
+        b["input_ids"] = [abs(w) for w in b["input_ids"]]
+        b["labels"] = [w if w > 0 else -100 for w in b["labels"]]
 
-        input_ids.append(torch.LongTensor(input_id))
-        # The labels have been shifted here, so they are aligned with the output corresponding to the token
-        labels.append(torch.LongTensor(label))
-        cumulative_len.append(b["cumulative_len"])
-        position_ids.append(torch.LongTensor(b["position_ids"]))
+        b_dict = default_collate_fn([b],
+                                    # pad_index: int = DEFAULT_PAD_TOKEN_INDEX,
+                                    return_hf_format=True,
+                                    use_varlen_attn=use_varlen_attn)
+        
+        input_ids.append(b_dict['input_ids'])
+        position_ids.append(b_dict['position_ids'])
+        labels.append(b_dict['labels'])
 
-    input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True)
-    labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
-    position_ids = torch.stack(position_ids, dim=0)
-    if len(set(map(len, cumulative_len))) == 1:  # if has uniform length, then stack to save device transfer time
-        cumulative_len = torch.stack(cumulative_len, dim=0)
-
+        if use_varlen_attn:
+            cumulative_len.append(b_dict['cumulative_len'][0])
+            max_seqlen.append(b_dict['max_seqlen'])
+        else:
+            attention_mask.append(b_dict['attention_mask'])
+    
+    input_ids = torch.vstack(input_ids)
+    position_ids = torch.vstack(position_ids)
+    labels = torch.vstack(labels)
+    
     assert input_ids.shape[1] == max_length, (input_ids.shape[1], max_length)
     assert input_ids.shape[0] == batch_size, (input_ids.shape[0], batch_size)
 
-    return {"input_ids": input_ids, "cumulative_len": cumulative_len, "position_ids": position_ids, "labels": labels}
+    return_dict = {"input_ids": input_ids,
+                   "position_ids": position_ids,
+                   "labels": labels,
+                   }
+
+    if use_varlen_attn:
+        return_dict['cumulative_len'] = cumulative_len
+        return_dict['max_seqlen'] = max_seqlen
+    else:
+        attention_mask = torch.vstack(attention_mask)
+        return_dict['attention_mask'] = attention_mask
+    return return_dict
+
 
 def batch_collate_fn(batch, max_length, batch_size):
     input_ids, labels, attention_mask = [], [], []
@@ -92,7 +114,7 @@ def batch_collate_fn(batch, max_length, batch_size):
     return {"input_ids": input_ids, "labels": labels, "attention_mask": attention_mask}
 
 
-def get_pretrain_data(folder=None, packed=True, max_length=8192, batch_size=32, seed=1024, file_type='.bin', min_length=0, shuffle=True):
+def get_pretrain_data(folder=None, packed=True, max_length=8192, batch_size=32, seed=1024, file_type='.bin', min_length=0, shuffle=True, use_varlen_attn=True):
     if (folder is None) or (batch_size <= 0):
         return None
     import functools
@@ -144,9 +166,10 @@ if __name__ == "__main__":
     #                                             )
     pretrain_dataset_config = dict(
             folder='/fs-computility/llm/shared/zhaoqian/dataset/pretrain/1226-mix-v13-complete-watermark-pjx50/train',
-            packed=False,
-            max_length=8192,
-            batch_size=32,
+            packed=True,
+            use_varlen_attn=True,
+            max_length=1024*8,
+            batch_size=2,
     )
 
     # pretrain_dataset_config = {}
@@ -160,8 +183,10 @@ if __name__ == "__main__":
 
     print(len(pretrain_data))
     for k in pretrain_data.keys():
-        if k != 'cumulative_len':
+        # print(k, type(pretrain_data[k]))
+        if k != 'cumulative_len' and k != 'max_seqlen':
             print(k, pretrain_data[k].shape,)# pretrain_data[k][0])
-
+        else:
+            print(k, pretrain_data[k])
     # print(pretrain_data['cumulative_len'])
     print(pretrain_data.keys())

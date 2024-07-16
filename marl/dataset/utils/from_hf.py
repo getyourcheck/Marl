@@ -174,4 +174,6 @@ def load_from_hf(hf_dir, tokenizer, data_dir=None):
             logger.error(f'Cannot load {hf_dir}, '
                          'checkout your datapath or dataset_map_fn...')
     logger.info(f'Loaded {hf_dir}, {dataset}')
+    # dataset_dict = dataset.to_dict()
+    # dataset_dict['message_data'] = dataset_dict['conversation']
     return dataset

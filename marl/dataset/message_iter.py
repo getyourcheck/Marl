@@ -1,6 +1,5 @@
-"""Finetuning dataset."""
+"""message dataset."""
 import random
-from dataclasses import dataclass
 from typing import List
 
 import numpy as np
@@ -10,15 +9,6 @@ from torch.utils.data import DataLoader, RandomSampler
 from marl.dataset.base import (InfiniteDataset,
                                MultiSourceInBatchDatset,
                                MultiSourceInDataDatset)
-
-
-@dataclass
-class Message:
-    message: List[dict]
-    sys_prompt: str = 'default'
-    rm_prompt: str = 'default'
-    token_ids: List[int] = None
-    mes_type: str = 'prompt'
 
 
 class MessageIter():
@@ -197,7 +187,7 @@ class MessageIter():
 
     def _postprocess_sequence(self, message):
         """Post process sequence: tokenization & truncation."""
-        message_data = message['data']
+        message_data = message['message_data']
         new_meaasage_data = []
         if self.message_type == 'prompt':
             for _ in reversed(range(len(message_data))):
@@ -237,9 +227,31 @@ class MessageIter():
                     f'[MES_ITER] {self.message_type} message {message} '
                     'is too short or long, skipped.')
                 return None
-        return Message(
-            message=new_meaasage_data,
-            token_ids=token_ids,
-            sys_prompt=message['sys_prompt'],
-            rm_prompt=message['rm_prompt'],
-            mes_type=self.message_type)
+        message.update({"message": new_meaasage_data,
+                        "token_ids": token_ids,
+                        "mes_type": self.message_type})
+        return message
+
+
+if __name__ == "__main__":
+    import sys
+    sys.path.append('./')
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained("/fs-computility/llm/shared/marl/models/internlm2/7B/hf/sft_ampere_7B_3.0.0_FT_0.19rc14_32k-3920_hf/", trust_remote_code=True)
+
+    prompt_dataset_config = dict(
+        samples_each_epoch=2,
+        max_len=1024,
+        message_type='prompt',
+        random_seed=1024,
+        sample_strategy='in_data',  # 'in_batch'
+        message_datasets=[
+            "/fs-computility/llm/lishuaibin/0716/marl/demo_datas/prompt_data.json::1.9471242181845173",
+            "[HF]Anthropic/hh-rlhf/helpful-base::0.5[RM_PROMPT]:default",
+            # "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/Anthropic_hh-rlhf_helpful-base-train.json::1.0169169094857184",
+            ])
+    prompt_mes_iter = iter(MessageIter(
+        tokenizer=tokenizer, **prompt_dataset_config))
+    for _ in range(3):
+        prompts = next(prompt_mes_iter)
+        print(prompts)

@@ -1,3 +1,4 @@
-[{"role": "user", "content": "How to study English?"}]
-[{"role": "system", "content": "You are a helpful AI assistant."}, {"role": "user", "content": "Give three tips for staying healthy."}]
-[{"role": "user", "content": "Give three tips for staying healthy."}, {"role": "assistant", "content": "1.Eat a balanced diet. 2. Exercise regularly. 3. Get enough sleep."}, {"role": "user", "content": "How to study English?"}]
+{"message_data": [{"role": "user", "content": "How to study English?"}], "extro_info": "knowedge", "extro_info1": "test"}
+{"message_data": [{"role": "user", "content": "How to study English?"}], "extro_info": "knowedge"}
+{"message_data": [{"role": "system", "content": "You are a helpful AI assistant."}, {"role": "user", "content": "Give three tips for staying healthy."}]}
+{"message_data": [{"role": "user", "content": "Give three tips for staying healthy."}, {"role": "assistant", "content": "1.Eat a balanced diet. 2. Exercise regularly. 3. Get enough sleep."}, {"role": "user", "content": "How to study English?"}]}

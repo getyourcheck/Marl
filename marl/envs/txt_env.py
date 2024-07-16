@@ -50,14 +50,14 @@ class TxtEnv(EnvBase):
         prompt_datas = deepcopy(next(self.prompt_mes_iter))
         prompt_input_messages = []
         for data in prompt_datas:
-            assert data.mes_type == 'prompt'
-            if data.sys_prompt != 'default':
+            assert data['mes_type'] == 'prompt'
+            if data['sys_prompt'] != 'default':
                 message = deepcopy([
                     dict(
-                        role='system', content=SYSTEM_PROMPT[data.sys_prompt])
-                ] + data.message)
+                        role='system', content=SYSTEM_PROMPT[data['sys_prompt']])
+                ] + data['message'])
             else:
-                message = deepcopy(data.message)
+                message = deepcopy(data['message'])
             prompt_input_messages.append(message)
         # prompt data
         if display:
@@ -87,26 +87,26 @@ class TxtEnv(EnvBase):
     def get_reward_async(self, prompt_datas, policyout):
         rm_input_messages = []
         for i in range(len(prompt_datas)):
-            if prompt_datas[i].mes_type != 'prompt':
+            if prompt_datas[i]['mes_type'] != 'prompt':
                 continue
-            if (prompt_datas[i].rm_prompt !=
-                    'default') or (prompt_datas[i].sys_prompt != 'default'):
+            if (prompt_datas[i]['rm_prompt'] !=
+                    'default') or (prompt_datas[i]['sys_prompt'] != 'default'):
                 # Conditional Reward Model
                 # for queries from different domains, use appropriate conditional system prompts  # noqa: E501
                 # From Alignment section of the InternLM2 Technical Report:
                 # https://arxiv.org/pdf/2403.17297
-                if prompt_datas[i].rm_prompt != 'default':
-                    prompt = prompt_datas[i].rm_prompt
+                if prompt_datas[i]['rm_prompt'] != 'default':
+                    prompt = prompt_datas[i]['rm_prompt']
                 else:
-                    prompt = prompt_datas[i].sys_prompt
+                    prompt = prompt_datas[i]['sys_prompt']
                 cur_rm_data = [
                     dict(role='system', content=SYSTEM_PROMPT[prompt])
-                ] + prompt_datas[i].message + [
+                ] + prompt_datas[i]['message'] + [
                     dict(
                         role='assistant', content=policyout.output_ans_str[i])
                 ]
             else:
-                cur_rm_data = prompt_datas[i].message + [
+                cur_rm_data = prompt_datas[i]['message'] + [
                     dict(
                         role='assistant', content=policyout.output_ans_str[i])
                 ]
@@ -129,19 +129,19 @@ class TxtEnv(EnvBase):
     def get_reward(self, prompt_datas, policyout):
         rm_input_messages = []
         for i in range(len(prompt_datas)):
-            if prompt_datas[i].mes_type != 'prompt':
+            if prompt_datas[i]['mes_type'] != 'prompt':
                 continue
-            if prompt_datas[i].rm_prompt != 'default':
+            if prompt_datas[i]['rm_prompt'] != 'default':
                 cur_rm_data = [
                     dict(
                         role='system',
-                        content=SYSTEM_PROMPT[prompt_datas[i].rm_prompt])
-                ] + prompt_datas[i].message + [
+                        content=SYSTEM_PROMPT[prompt_datas[i]['rm_prompt']])
+                ] + prompt_datas[i]['message'] + [
                     dict(
                         role='assistant', content=policyout.output_ans_str[i])
                 ]
             else:
-                cur_rm_data = prompt_datas[i].message + [
+                cur_rm_data = prompt_datas[i]['message'] + [
                     dict(
                         role='assistant', content=policyout.output_ans_str[i])
                 ]

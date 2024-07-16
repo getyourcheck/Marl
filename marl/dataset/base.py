@@ -45,6 +45,16 @@ class InfiniteDataset(IterableDataset):
             self.rng.shuffle(self.indices)
             for i in self.indices:
                 if isinstance(self.data[i], dict):
+                    assert 'message_data' in self.data[i].keys()
+                    message_data = self.data[i]['message_data']
+                    try:
+                        self.tokenizer.apply_chat_template(message_data, tokenize=True)
+                    except Exception:
+                        logger.info(
+                            f'[data tokenize check] skip dirty data: {self.data[i]}')
+                        continue
+                    self.data[i].update({'sys_prompt': self.sys_prompt,
+                                 'rm_prompt': self.rm_prompt})
                     yield self.data[i]
                 elif isinstance(self.data[i], list):
                     try:
@@ -55,7 +65,7 @@ class InfiniteDataset(IterableDataset):
                                     f'skip dirty data: {self.data[i]}')
                         continue
                     yield dict(
-                        data=self.data[i],
+                        message_data=self.data[i],
                         sys_prompt=self.sys_prompt,
                         rm_prompt=self.rm_prompt)
 
@@ -93,16 +103,18 @@ class IterDataset(IterableDataset):
             with open_file(self._filename) as fin:
                 for lineno, line in enumerate(fin):
                     data = json.loads(line)
+                    assert isinstance(data, dict)
+                    assert 'message_data' in data.keys()
+                    message_data = data['message_data']
                     try:
-                        self.tokenizer.apply_chat_template(data, tokenize=True)
+                        self.tokenizer.apply_chat_template(message_data, tokenize=True)
                     except Exception:
                         logger.info(
                             f'[data tokenize check] skip dirty data: {data}')
                         continue
-                    yield dict(
-                        data=data,
-                        sys_prompt=self.sys_prompt,
-                        rm_prompt=self.rm_prompt)
+                    data.update({'sys_prompt': self.sys_prompt,
+                                 'rm_prompt': self.rm_prompt})
+                    yield data
 
 
 class MultiSourceInBatchDatset(IterableDataset):
@@ -193,7 +205,7 @@ class JsonDataset(Dataset):
         self.sys_prompt = sys_prompt
         self.rm_prompt = rm_prompt
 
-        if filename is not None:
+        if data_list is None:
             self.data_list = []
             with open_file(filename) as fin:
                 for lineno, line in enumerate(fin):
@@ -207,16 +219,28 @@ class JsonDataset(Dataset):
 
     def __getitem__(self, index: int):
         data = self.data_list[index]
-        try:
-            self.tokenizer.apply_chat_template(data, tokenize=True)
-            return {
-                'data': data,
-                'sys_prompt': self.sys_prompt,
-                'rm_prompt': self.rm_prompt
-            }
-        except Exception:
-            logger.info(f'[data tokenize check] skip dirty data: {data}')
-            return None
+        if isinstance(data, dict):
+            assert 'message_data' in data.keys()
+            message_data = data['message_data']
+            try:
+                self.tokenizer.apply_chat_template(message_data, tokenize=True)
+                data.update({'sys_prompt': self.sys_prompt,
+                            'rm_prompt': self.rm_prompt})
+                return data
+            except Exception:
+                logger.info(f'[data tokenize check] skip dirty data: {data}')
+                return None
+        elif isinstance(data, list):
+            try:
+                self.tokenizer.apply_chat_template(data, tokenize=True)
+                return dict(
+                    message_data=data,
+                    sys_prompt=self.sys_prompt,
+                    rm_prompt=self.rm_prompt)
+            except Exception:
+                logger.info('[data tokenize check] '
+                            f'skip dirty data: {self.data[i]}')
+                return None
 
 
 class MultiSourceInDataDatset(Dataset):
@@ -266,8 +290,7 @@ class MultiSourceInDataDatset(Dataset):
             filepath = task['filepath']
 
             if '[HF]' in filepath:
-                from xtuner.rlhf.dataset.utils.from_hf import load_from_hf
-
+                from marl.dataset.utils.from_hf import load_from_hf
                 # loading & convert & save opensource datasets
                 hf_dir = filepath.split('[HF]')[-1]
                 logger.info(f'Loading {hf_dir} with huggingface format ...')

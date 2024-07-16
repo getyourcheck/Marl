@@ -117,6 +117,7 @@ if __name__ == '__main__':
     save_interval = train_config['save_interval']
     max_train_step = train_config.get('max_train_step', float('inf'))
     resume_step = train_config.get('resume_step', -1)
+    txt_env.resume_step = resume_step
     critic_warmup_step = min(critic_warmup_step,
                              critic_warmup_step - resume_step)
     async_learn = train_config.get('async_learn', False)
@@ -140,9 +141,10 @@ if __name__ == '__main__':
             ppo_loss, pt_loss = None, None
             if critic_warmup_step <= 0:
                 if resume_step > 0:
-                    for _ in range(resume_step):
+                    for _ in range(critic_warmup_step, 0):
                         pretrain_data=next(pretrain_data_iter) if pretrain_data_iter is not None else None
                     resume_step = -1
+                pretrain_data=next(pretrain_data_iter) if pretrain_data_iter is not None else None
                 ppo_loss, pt_loss = ppo.policy_learn(trajectories, pretrain_data=pretrain_data)
                 logger_train.info(
                     f'[Policy Train] Step: {step}, '

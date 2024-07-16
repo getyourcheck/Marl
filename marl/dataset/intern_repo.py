@@ -125,7 +125,7 @@ def get_pretrain_data(folder=None, packed=True, max_length=8192, batch_size=32, 
         min_length=min_length,
         file_type=file_type
     )
-    
+    torch.manual_seed(seed)
     pretrain_dataset = build_dataset(dataset_cfg, packed=packed, max_length=max_length, seed=seed)
 
     collate_fn = packed_collate_fn if packed else batch_collate_fn
@@ -142,28 +142,6 @@ def get_pretrain_data(folder=None, packed=True, max_length=8192, batch_size=32, 
 
 
 if __name__ == "__main__":
-    # dataset_cfg = dict(
-    #     type=load_intern_repo_tokenized_dataset,
-    #     folder='/fs-computility/llm/shared/zhaoqian/dataset/pretrain/1226-mix-v13-complete-watermark-pjx50/train',
-    #     min_length=0,
-    #     file_type='.bin'
-    # )
-
-    # dataset = build_dataset(dataset_cfg, packed=True, max_length=1024, seed=1024)
-    # print("=============")
-    # i = next(iter(dataset))
-
-    # for k, v in i.items():
-    #     try:
-    #         print(k, v.shape)
-    #     except:
-    #         print(k, len(v))
-    # exit()
-    # pretrain_data_iterator = get_pretrain_data(folder='/fs-computility/llm/shared/zhaoqian/dataset/pretrain/1226-mix-v13-complete-watermark-pjx50/train',
-    #                                             packed=True,
-    #                                             max_length=8192,
-    #                                             batch_size=32,
-    #                                             )
     pretrain_dataset_config = dict(
             folder='/fs-computility/llm/shared/zhaoqian/dataset/pretrain/1226-mix-v13-complete-watermark-pjx50/train',
             packed=True,
@@ -175,18 +153,19 @@ if __name__ == "__main__":
     # pretrain_dataset_config = {}
     pretrain_data_iterator = get_pretrain_data(**pretrain_dataset_config)
 
-    pretrain_data = next(pretrain_data_iterator) if pretrain_data_iterator is not None else None
+    for _ in range(3):
+        pretrain_data = next(pretrain_data_iterator) if pretrain_data_iterator is not None else None
 
-    import numpy as np
-    import torch
-    torch.set_printoptions(threshold=np.inf)
+        import numpy as np
+        import torch
+        torch.set_printoptions(threshold=np.inf)
 
-    print(len(pretrain_data))
-    for k in pretrain_data.keys():
-        # print(k, type(pretrain_data[k]))
-        if k != 'cumulative_len' and k != 'max_seqlen':
-            print(k, pretrain_data[k].shape,)# pretrain_data[k][0])
-        else:
-            print(k, pretrain_data[k])
-    # print(pretrain_data['cumulative_len'])
-    print(pretrain_data.keys())
+        print(len(pretrain_data),'======================')
+        for k in pretrain_data.keys():
+            # print(k, type(pretrain_data[k]))
+            if k != 'cumulative_len' and k != 'max_seqlen':
+                print(k, pretrain_data[k].shape,)# pretrain_data[k][0])
+            else:
+                print(k, pretrain_data[k])
+        # print(pretrain_data['cumulative_len'])
+        print(pretrain_data.keys())

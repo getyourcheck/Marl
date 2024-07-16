@@ -86,9 +86,11 @@ vllm_tp_size = 2
 GENERATE_MICRO_BATCH_SIZE = 8
 INFER_MICRO_BATCH_SIZE = 8
 TRAIN_MICRO_BATCH_SIZE = 1
-policy_model_path = '/fs-computility/llm/shared/marl/models/internlm2/7B/hf/sft_ampere_7B_3.0.0_FT_0.19rc14_32k-3920_hf/'
+reference_model_path = '/fs-computility/llm/shared/marl/models/internlm2/7B/hf/sft_ampere_7B_3.0.0_FT_0.19rc14_32k-3920_hf/'
 reward_model_path = '/fs-computility/llm/shared/marl/models/internlm2/7B/hf/R-Ampere-7B-8k-D20240318-v1-868_hf/'
-
+policy_model_path = reference_model_path    # resume 时需设置
+critic_model_path = reward_model_path       # resume 时需设置
+resume_step = -1                            # 断点续训，需将policy、critic model path设置为对应路径
 
 #######################################################################
 #                            其余  Settings                           #
@@ -142,6 +144,8 @@ train_config = dict(
     critic_warmup_step=40,                  # critic model 热启step
     save_interval=40,                       # 每隔 save_interval 步保存一次模型
     max_train_step=400,                     # 最大训练步数
+    async_learn=True,                      # policy critic 异步learn
+    resume_step=resume_step,                # resume step=critic_train_step, 断点续训时需设置policy、critic model path为对应路径
 )
 
 #######################################################################
@@ -206,7 +210,7 @@ model_configs = dict(
         ),
     ),
     critic=dict(
-        model_path=reward_model_path,
+        model_path=critic_model_path,
         model_type='critic',
         # head_name=['v_head', ],
         trainer_config=dict(
@@ -254,7 +258,7 @@ model_configs = dict(
         ),
     ),
     reference=dict(
-        model_path=policy_model_path,
+        model_path=reference_model_path,
         model_type='reference',
         trainer_config=dict(
             torch_dtype='auto',

@@ -1,6 +1,7 @@
 import uuid
+import ray
 from typing import TypeVar
-
+from loguru import logger
 from ray.util.placement_group import PlacementGroup
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
@@ -28,9 +29,29 @@ def create_ray_actors(
             ),
             runtime_env=set_runtime_env(),
         ).remote(config)
+    ray_actors = sort_ray_actors(name_prefix, ray_actors)
     return ray_actors
 
 
 def set_runtime_env():
     runtime_env = {'env_vars': {'HF_ENDPOINT': 'https://hf-mirror.com'}}
     return runtime_env
+
+def sort_ray_actors(name_prefix, unsorted_actors: list[T]) -> list[T]:
+    sorted_actors = []
+    metadata_refs = [actor.get_metadata.remote() for actor in unsorted_actors]
+    metadatas = ray.get(metadata_refs)
+    ip_index_map = {}
+    for index, metadata in enumerate(metadatas):
+        node_ip = metadata.node_ip
+        if node_ip in ip_index_map:
+            ip_index_map[node_ip].append(index)
+        else:
+            ip_index_map[node_ip] = [index]
+    rank = -1
+    for node_ip, indexes in ip_index_map.items():
+        for index in indexes:
+            rank = rank + 1
+            sorted_actors.append(unsorted_actors[index])
+            logger.info(f"rank_mapping: actor_name:[{name_prefix}_rank_{index}] -> rank:[{rank}]")
+    return sorted_actors

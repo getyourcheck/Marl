@@ -28,20 +28,22 @@ class PolicyModelServer(BaseModelServer):
         generator_config['tokenizer_path'] = self.tokenizer_config[
             'tokenizer_path']
         generator_type = generator_config.get('generator_type', None)
+        self.generator_type = generator_type
         if generator_type == ENGINE_VLLM:
             from ..model_backend.vllm_model_runner import \
                 VllmGeneratorRayActorGroup
             self.generator = VllmGeneratorRayActorGroup(
                 f'{self.model_name}_generator', generator_config)
-            # to sync model among trainer and generator
-            self.trainer.initialize_get()
-            self.trainer.init_process_group(self.generator)
         else:
             raise ValueError(
                 f"No generator is registered with type '{generator_type}'")
         self.generator_eq_trainer = False
 
     def initialize_get(self):
+        if self.generator_type == ENGINE_VLLM:
+            # to sync model among trainer and generator
+            self.trainer.initialize_get()
+            self.trainer.init_process_group(self.generator)
         self.generator.initialize_get()
         self.is_initialized = True
         logger.info(f'{self.model_name} has been initialized. ')

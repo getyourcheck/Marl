@@ -120,7 +120,7 @@ if __name__ == '__main__':
     txt_env.resume_step = resume_step
     critic_warmup_step = min(critic_warmup_step,
                              critic_warmup_step - resume_step)
-    async_learn = train_config.get('async_learn', False)
+    async_learn = train_config.get('async_learn', True)
 
     step = max(0, resume_step)
     while step <= max_train_step:

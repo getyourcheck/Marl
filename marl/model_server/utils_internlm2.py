@@ -51,12 +51,7 @@ def get_critic_model(model_name_or_path: str, head_name):
             self.model = model_class(config)
             self.head_name = head_name
             setattr(self, head_name,
-                    nn.Sequential(
-                nn.Linear(config.hidden_size, config.hidden_size, bias=False),
-                nn.LayerNorm(config.hidden_size, eps=config.rms_norm_eps),
-                nn.Tanh(),
-                nn.Linear(config.hidden_size, 1, bias=False),
-            ))
+                    nn.Linear(config.hidden_size, 1, bias=False))
 
         def forward(
             self,
@@ -90,12 +85,8 @@ def get_reward_model(model_name_or_path: str, head_name):
             self.model = model_class(config)
             self.head_name = head_name
             setattr(self, head_name,
-                    nn.Sequential(
-                nn.Linear(config.hidden_size, config.hidden_size, bias=False),
-                nn.LayerNorm(config.hidden_size, eps=config.rms_norm_eps),
-                nn.Tanh(),
-                nn.Linear(config.hidden_size, 1, bias=False),
-            ))
+                    nn.Linear(config.hidden_size, 1, bias=False))
+
         def forward(
             self,
             input_ids: torch.LongTensor = None,

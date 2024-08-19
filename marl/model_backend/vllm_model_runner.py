@@ -183,7 +183,7 @@ class VllmGenerator:
             output[
                 'attention_mask'] = output.question_mask + output.answer_mask  # noqa: E501
             output['action_mask'] = output[
-                'attention_mask'][:, max_inputs_length - 1:-1]
+                'attention_mask'][:, max_inputs_length:]
             if output_logits:
                 raise NotImplementedError('TODO: output_logits')
             if output_attentions:

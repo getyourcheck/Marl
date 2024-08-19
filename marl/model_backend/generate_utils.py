@@ -39,6 +39,8 @@ def partition_by_micro_batch_size(
     position_ids: torch.Tensor = None,
     labels: Optional[Union[list[torch.Tensor], torch.Tensor,
                            dict[str, torch.Tensor]]] = None,
+    cumulative_len: Optional[list[torch.Tensor]] = None,
+    max_seqlen: Optional[list[int]] = None,
 ) -> list[dict[str, torch.Tensor]]:
     max_inputs_length = get_longest_list_length(input_ids) if isinstance(
         input_ids, list) else None
@@ -52,6 +54,8 @@ def partition_by_micro_batch_size(
         micro_batch['position_ids'] = position_ids
         micro_batch['labels'] = labels
         micro_batch['max_inputs_length'] = max_inputs_length
+        micro_batch['cumulative_len'] = cumulative_len
+        micro_batch['max_seqlen'] = max_seqlen
         micro_batches.append(micro_batch)
         return micro_batches
     if micro_batch_size > batch_size:
@@ -91,6 +95,14 @@ def partition_by_micro_batch_size(
         micro_batch['position_ids'] = position_ids_split[i]
         micro_batch['labels'] = labels_split[i]
         micro_batch['max_inputs_length'] = max_inputs_length
+        if cumulative_len is not None:
+            micro_batch['cumulative_len'] = cumulative_len[i * micro_batch_size : (i + 1) * micro_batch_size]
+        else:
+            micro_batch['cumulative_len'] = None
+        if max_seqlen is not None:
+            micro_batch['max_seqlen'] = max_seqlen[i * micro_batch_size : (i + 1) * micro_batch_size]
+        else:
+            micro_batch['max_seqlen'] = None
         micro_batches.append(micro_batch)
     return micro_batches
 
@@ -127,6 +139,8 @@ def partition_list_by_micro_batch_size(
     labels: list[torch.Tensor],
     attention_mask: Optional[list[torch.Tensor]] = None,
     position_ids: Optional[list[torch.Tensor]] = None,
+    cumulative_len: Optional[list[list[torch.Tensor]]] = None,
+    max_seqlen: Optional[list[list[int]]] = None,
 ) -> list[dict]:
     length = len(input_ids)
     batch_size = input_ids[0].shape[0]
@@ -137,14 +151,20 @@ def partition_list_by_micro_batch_size(
         attention_mask = [None for _ in range(length)]
     if position_ids is None:
         position_ids = [None for _ in range(length)]
+    if cumulative_len is None:
+        cumulative_len = [None for _ in range(length)]
+    if max_seqlen is None:
+        max_seqlen = [None for _ in range(length)]
     for i in range(length):
         sub_input_ids = input_ids[i]
         sub_attention_mask = attention_mask[i]
         sub_position_ids = position_ids[i]
         sub_labels = labels[i]
+        sub_cumulative_len = cumulative_len[i]
+        sub_max_seqlen = max_seqlen[i]
         sub_micro_batches = partition_by_micro_batch_size(
             sub_input_ids, micro_batch_size[i], sub_attention_mask,
-            sub_position_ids, sub_labels)
+            sub_position_ids, sub_labels, sub_cumulative_len, sub_max_seqlen)
         for micro_batch_index, sub_micro_batch in enumerate(sub_micro_batches):
             micro_batches[micro_batch_index][i]['input_ids'] = sub_micro_batch[
                 'input_ids']
@@ -154,6 +174,10 @@ def partition_list_by_micro_batch_size(
                 'position_ids'] = sub_micro_batch['position_ids']
             micro_batches[micro_batch_index][i]['labels'] = sub_micro_batch[
                 'labels']
+            micro_batches[micro_batch_index][i]['cumulative_len'] = sub_micro_batch[
+                'cumulative_len']
+            micro_batches[micro_batch_index][i]['max_seqlen'] = sub_micro_batch[
+                'max_seqlen']
     return micro_batches
 
 

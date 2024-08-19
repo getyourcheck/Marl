@@ -39,7 +39,6 @@ def build_dataset(*args, **kwargs):
     dist.broadcast_object_list(objects, src=0)
     return objects[0]
 
-
 def packed_collate_fn(batch, max_length, batch_size, use_varlen_attn=True):
     input_ids, position_ids, labels = [], [], []
     attention_mask = []
@@ -51,6 +50,7 @@ def packed_collate_fn(batch, max_length, batch_size, use_varlen_attn=True):
 
         b["input_ids"] = [abs(w) for w in b["input_ids"]]
         b["labels"] = [w if w > 0 else -100 for w in b["labels"]]
+        b["labels"] = b["labels"][1:] + [-100]
 
         b_dict = default_collate_fn([b],
                                     # pad_index: int = DEFAULT_PAD_TOKEN_INDEX,
@@ -94,7 +94,7 @@ def batch_collate_fn(batch, max_length, batch_size):
     while not done:
         for b in batch:
             input_id = [abs(w) for w in b["input_ids"]]
-            label = list(input_id[1:]) + [-100]
+            label = list(input_id[1:]) + [-100]  # TODO, build label
             # labels = deepcopy(input_ids)
             attn = [True for _ in b["input_ids"]]
             attn[-1] = False

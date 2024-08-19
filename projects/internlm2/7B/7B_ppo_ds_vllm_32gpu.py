@@ -164,7 +164,7 @@ model_configs = dict(
                 data=dict(size=POLICY_DP_SIZE, mode='deepspeed'),
                 tensor=dict(size=1, mode='1d'),
                 pipeline=dict(size=1, interleaved_overlap=False),
-                sequence=False,
+                sequence=dict(size=1),
             ),
             deepspeed_config={
                 'zero_optimization': {
@@ -199,7 +199,7 @@ model_configs = dict(
                 data=dict(size=vllm_dp_size, mode='ddp'),
                 tensor=dict(size=vllm_tp_size, mode='1d'),
                 pipeline=dict(size=1, interleaved_overlap=False),
-                sequence=False,
+                sequence=dict(size=1),
             ),
         ),
     ),
@@ -222,7 +222,7 @@ model_configs = dict(
                 data=dict(size=CRITIC_DP_SIZE, mode='deepspeed'),
                 tensor=dict(size=1, mode='1d'),
                 pipeline=dict(size=1, interleaved_overlap=False),
-                sequence=False,
+                sequence=dict(size=1),
             ),
             deepspeed_config={
                 'zero_optimization': {
@@ -262,7 +262,7 @@ model_configs = dict(
                 data=dict(size=reference_dp_size, mode="deepspeed"),
                 tensor=dict(size=1, mode="1d"),
                 pipeline=dict(size=1, interleaved_overlap=False),
-                sequence=False,
+                sequence=dict(size=1),
             ),
             deepspeed_config={
                 "zero_optimization": {
@@ -302,7 +302,7 @@ model_configs = dict(
                 data=dict(size=reward_dp_size, mode="deepspeed"),
                 tensor=dict(size=1, mode="1d"),
                 pipeline=dict(size=1, interleaved_overlap=False),
-                sequence=False,
+                sequence=dict(size=1),
             ),
             deepspeed_config={
                 "zero_optimization": {

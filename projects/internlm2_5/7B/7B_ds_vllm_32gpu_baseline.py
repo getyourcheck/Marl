@@ -1,0 +1,361 @@
+# 主要修改内容：数据集配置。【！！！当不使用pretrain数据时，需设置 PRETRAIN_BATCH_SIZE=0 】
+#######################################################################
+#                            数据集  Settings                         #
+#######################################################################
+
+# 1. Prompt ppo数据配置
+MAX_PROMPT_LEN = 1024     # prompt token长度设置
+MAX_ANSWER_LEN = 1024     # answer token长度设置
+PROMPT_BATCH_SIZE = 512   # prompt batch size
+
+prompt_dataset_config = dict(
+    samples_each_epoch=PROMPT_BATCH_SIZE,
+    max_len=MAX_PROMPT_LEN,
+    message_type='prompt',
+    random_seed=1024,
+    sample_strategy='in_data',  # 'in_data' [数据采样方式，in_batch表示一个batch内按不同数据集比例采样，in_data表示按各自数据集内采样比例抽取数据后组成最终的dataloader]
+    message_datasets=[
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/Anthropic_hh-rlhf_harmless-base-train.json::0.2",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/Anthropic_hh-rlhf_helpful-base-train.json::0.5",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/non_toxic_single_turn_tie_both_good-train.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/non_toxic_single_turn_tie_both_bad-train.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/split_0_2_prompt.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/toxic_single_turn-train.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/zephyr-ultrachat-200k_ppo_train_1t.json::0.08",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/lmsys-chat-english-chat-format-100char-1t.json::0.04",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/airoboros_reward.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/out_instinwild_cn_origin_18_26-rd.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/split_0_prompt-refined.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/split_1_prompt.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/indomain_writing_2k.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/zhihu_177k_outline_to_artical-with-sys.json::0.1",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/subeval_writing_prompt_only_v2.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/gaokao_essay_prompt.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/wangrui6_Zhihu-KOL-train.json::0.05",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/0801-train.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/shezheng_52230_20230905_prompts-train-rd.json::0.2[RM_PROMPT]:cn-safety",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/yuqing_5817_20230831_prompts-train-rd.json::0.2[RM_PROMPT]:cn-safety",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/shezheng_adv_7549_20230913-train-rd.json::0.2",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/yuqing_adv_5817_20230913-train-rd.json::0.2",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/lingdaoren_adv_4963_20230913-train-rd.json::0.2",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/safety_reward_merged_20230609_newformat_prompt.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/0801-train-unfair.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/0801-train-illegal.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/0801-train-privacy.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/0801-train-immoral.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/openai_summarize_from_feedback-train.json::0.04[SYS_PROMPT]:summarization",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/puyu_chat_format_v2-train.json::1.0[RM_PROMPT]:puyu",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/identity_200_sft_for_ppo_prompt_only.json::1.0[RM_PROMPT]:puyu",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/COIG-0906-train.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/ANLI-0904-train.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/SFT6W-prompts-train.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/if_cn_en_gpt4vs1and7b.json::0.25",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/prm800k_ppo_prompt_1212.json::1.0[SYS_PROMPT]:latex",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/math_shepherd_ppo_prompt_augmented.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/40k_sampled_prompt_for_ppo.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/maxmin_sample200_prompt_only.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/gsm8k_sample200_prompt_only.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/reward_patch_20240103_prompt_only.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/haochen_data.json::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/data_reflow_2w.json::0.75",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/retrieval_refined_bench_no_alpaca.json::0.5",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/airoboros_reward_ocra_math.json::0.5",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/gaokao_preference_processed.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/reward_patch_20240407.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/gongwuyuan_logic_prompt_for_ppo.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/questions_of_name.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/questions_of_objects.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/questions_of_task.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/safety_positive_patch_china_politic.jsonl::1.0",
+        "/fs-computility/llm/shared/lishuaibin/datasets/prompt_datas/lmsys-arena-human-preference-55k_single_round_train.jsonl::1.0[RM_PROMPT]:lmsys_arena",
+    ])
+
+# 2. Pretrain 数据配置
+PRETRAIN_BATCH_SIZE = 0 # 256 # pretrain batch size ！！！ 不使用pretrain数据时，需设置为 0
+MAX_PRETRAIN_LEN = 8192 # pretrain数据 token长度设置
+
+pretrain_dataset_config = dict(
+        folder='/fs-computility/llm/shared/zhaoqian/dataset/pretrain/1226-mix-v13-complete-watermark-pjx50/train',
+        packed=False, # WIP: 暂不支持 packed data。 SP开发中
+        max_length=MAX_PRETRAIN_LEN,
+        batch_size=PRETRAIN_BATCH_SIZE,
+)
+
+#######################################################################
+#                            训练  Settings                         #
+#######################################################################
+ZERO_STAGE = 3
+use_flash_attn = True
+gradient_checkpointing = True
+async_learn = True
+
+# 训练卡数配置
+POLICY_DP_SIZE = 8          # policy model dp数
+CRITIC_DP_SIZE = 8          # critic model dp 数
+reference_dp_size = 8       # reference model dp 数（仅用于 infer）
+reward_dp_size = 4          # reward model dp 数（仅用于 infer）
+# vllm 推理卡数配置
+vllm_dp_size = 4
+vllm_tp_size = 1
+
+GENERATE_MICRO_BATCH_SIZE = 8
+INFER_MICRO_BATCH_SIZE = 8
+TRAIN_MICRO_BATCH_SIZE = 1
+policy_model_path = '/fs-computility/llm/shared/zhangwenwei/ckpt/exps/20240623/aliyun_internlm2.5_boost1_7B_FT_s1_20240621rc11_s2_20240612rc13/379_hf/'
+reward_model_path = '/fs-computility/llm/shared/lvchengqi/ckpts/reward/7B/R-Ampere-7B-8k-D20240620-v1/615_hf/'
+
+
+#######################################################################
+#                            其余  Settings                           #
+#######################################################################
+# 1. tokenizer 设置，默认从 policy_model_path load
+tokenizer_config = dict(
+    # tokenizer_path='/fs-computility/llm/shared/marl/models/internlm2/7B/hf/sft_ampere_7B_3.0.0_FT_0.19rc14_32k-3920_hf/',
+    pad_token_id=0,
+    eos_token_id=92542,
+    padding_side='left',
+)
+# 2. policy rollout trajectory 
+rollout_config = dict(
+    policy_micro_bs=GENERATE_MICRO_BATCH_SIZE,
+    reward_micro_bs=GENERATE_MICRO_BATCH_SIZE,
+    max_new_tokens=MAX_ANSWER_LEN,
+    write_to_file=True,
+    generate_kwargs={
+        'do_sample': True,
+        'temperature': 1.0,
+        'top_k': 0,
+        'top_p': 0.9,
+        'min_new_tokens': 1,
+        'num_beams': 1,
+        'early_stopping': True,
+        'eos_token_id': 92542,
+        'pad_token_id': 0,
+    },
+)
+# 3. repeater 设置，处理trajectory操作
+repeater_config = dict(
+    policy_micro_bs=INFER_MICRO_BATCH_SIZE,
+    critic_micro_bs=INFER_MICRO_BATCH_SIZE,
+    ref_micro_bs=INFER_MICRO_BATCH_SIZE,
+    kl_coeff=0.01,
+    gamma=1.0,
+    gae_lambda=0.99,
+    clip_reward_min=-5,
+    clip_reward_max=5,
+    norm_rewards=True,
+)
+# 4. train 设置
+policy_lr=1e-6
+critic_lr=5e-6
+
+train_config = dict(
+    policy_micro_bs=TRAIN_MICRO_BATCH_SIZE,
+    critic_micro_bs=TRAIN_MICRO_BATCH_SIZE,
+    ppo_loss_weight=1.0,                    # prompt-ppo loss weight
+    pretrain_loss_weight=0.5,               # pretrain loss weight
+    critic_warmup_step=40,                  # critic model 热启step
+    save_interval=40,                       # 每隔 save_interval 步保存一次模型
+    max_train_step=600,                     # 最大训练步数
+    async_learn=async_learn,                # 是否异步学习
+)
+
+#######################################################################
+#                            models 默认配置                           #
+#######################################################################
+model_configs = dict(
+    policy=dict(
+        model_path=policy_model_path,
+        model_type='policy',
+        trainer_config=dict(
+            torch_dtype='auto',
+            trainer_type='huggingface',
+            use_flash_attn=use_flash_attn,
+            gradient_checkpointing=gradient_checkpointing,
+            train_kwargs=dict(
+                micro_bsz=1,
+                lr=policy_lr,
+                total_steps=1e9,
+                lr_decay_rate=1,
+            ),
+            parallel=dict(
+                data=dict(size=POLICY_DP_SIZE, mode='deepspeed'),
+                tensor=dict(size=1, mode='1d'),
+                pipeline=dict(size=1, interleaved_overlap=False),
+                sequence=False,
+            ),
+            deepspeed_config={
+                'zero_optimization': {
+                    'stage': ZERO_STAGE,
+                    'offload_param': {
+                        'device': 'none'
+                    },
+                    'reduce_bucket_size': 'auto',
+                    'zero_hpz_partition_size': 1,
+                    'zero_quantized_weights': False,
+                    'zero_quantized_gradients': False,
+                    'stage3_gather_16bit_weights_on_model_save': True,
+                },
+                'bf16': {
+                    'enabled': True
+                },
+                'gradient_clipping': 1.0,
+                'prescale_gradients': False,
+                'wall_clock_breakdown': False,
+                'data_types': {
+                    'grad_accum_dtype': 'fp32'
+                },
+                'train_micro_batch_size_per_gpu': TRAIN_MICRO_BATCH_SIZE,
+                'gradient_accumulation_steps': (PROMPT_BATCH_SIZE + PRETRAIN_BATCH_SIZE) // POLICY_DP_SIZE // TRAIN_MICRO_BATCH_SIZE,
+                'train_batch_size': PROMPT_BATCH_SIZE + PRETRAIN_BATCH_SIZE,
+            },
+        ),
+        generator_config=dict(
+            shared_with_trainer=False,
+            generator_type='vllm',
+            parallel=dict(
+                data=dict(size=vllm_dp_size, mode='ddp'),
+                tensor=dict(size=vllm_tp_size, mode='1d'),
+                pipeline=dict(size=1, interleaved_overlap=False),
+                sequence=False,
+            ),
+        ),
+    ),
+    critic=dict(
+        model_path=reward_model_path,
+        model_type='critic',
+        # head_name=['v_head', ],
+        trainer_config=dict(
+            torch_dtype='auto',
+            trainer_type='huggingface',
+            use_flash_attn=use_flash_attn,
+            gradient_checkpointing=gradient_checkpointing,
+            train_kwargs=dict(
+                micro_bsz=1,
+                lr=critic_lr,
+                total_steps=1e9,
+                lr_decay_rate=1,
+            ),
+            parallel=dict(
+                data=dict(size=CRITIC_DP_SIZE, mode='deepspeed'),
+                tensor=dict(size=1, mode='1d'),
+                pipeline=dict(size=1, interleaved_overlap=False),
+                sequence=False,
+            ),
+            deepspeed_config={
+                'zero_optimization': {
+                    'stage': ZERO_STAGE,
+                    'offload_param': {
+                        'device': 'none'
+                    },
+                    'reduce_bucket_size': 'auto',
+                    'zero_hpz_partition_size': 1,
+                    'zero_quantized_weights': False,
+                    'zero_quantized_gradients': False,
+                    'stage3_gather_16bit_weights_on_model_save': True,
+                },
+                'bf16': {
+                    'enabled': True
+                },
+                'gradient_clipping': 1.0,
+                'prescale_gradients': False,
+                'wall_clock_breakdown': False,
+                'data_types': {
+                    'grad_accum_dtype': 'fp32'
+                },
+                'train_micro_batch_size_per_gpu': TRAIN_MICRO_BATCH_SIZE,
+                'gradient_accumulation_steps': PROMPT_BATCH_SIZE // CRITIC_DP_SIZE // TRAIN_MICRO_BATCH_SIZE,
+                'train_batch_size': PROMPT_BATCH_SIZE,
+            },
+        ),
+    ),
+    reference=dict(
+        model_path=policy_model_path,
+        model_type='reference',
+        trainer_config=dict(
+            torch_dtype='auto',
+            trainer_type="huggingface",
+            parallel=dict(
+                data=dict(size=reference_dp_size, mode="deepspeed"),
+                tensor=dict(size=1, mode="1d"),
+                pipeline=dict(size=1, interleaved_overlap=False),
+                sequence=False,
+            ),
+            deepspeed_config={
+                "zero_optimization": {
+                    "stage": ZERO_STAGE, 
+                    "offload_param": {
+                        "device": "none"
+                    },
+                    "reduce_bucket_size": "auto", 
+                    "zero_hpz_partition_size": 1, 
+                    "zero_quantized_weights": False, 
+                    "zero_quantized_gradients": False
+                }, 
+                "bf16": {
+                    "enabled": True
+                }, 
+                "gradient_clipping": 1.0, 
+                "prescale_gradients": False, 
+                "wall_clock_breakdown": False, 
+                "data_types": {
+                    "grad_accum_dtype": "fp32"
+                }, 
+                'train_micro_batch_size_per_gpu': TRAIN_MICRO_BATCH_SIZE,
+                'gradient_accumulation_steps': (PROMPT_BATCH_SIZE + PRETRAIN_BATCH_SIZE) // reference_dp_size // TRAIN_MICRO_BATCH_SIZE,
+                'train_batch_size': PROMPT_BATCH_SIZE + PRETRAIN_BATCH_SIZE,
+            },
+        ),
+    ),
+    reward=dict(
+        model_path=reward_model_path,
+        model_type='reward',
+        # head_name=['v_head', ],
+        trainer_config=dict(
+            torch_dtype='auto',
+            trainer_type="huggingface",
+            parallel=dict(
+                data=dict(size=reward_dp_size, mode="deepspeed"),
+                tensor=dict(size=1, mode="1d"),
+                pipeline=dict(size=1, interleaved_overlap=False),
+                sequence=False,
+            ),
+            deepspeed_config={
+                "zero_optimization": {
+                    "stage": ZERO_STAGE, 
+                    "offload_param": {
+                        "device": "none"
+                    },
+                    "reduce_bucket_size": "auto", 
+                    "zero_hpz_partition_size": 1, 
+                    "zero_quantized_weights": False, 
+                    "zero_quantized_gradients": False
+                }, 
+                "bf16": {
+                    "enabled": True
+                }, 
+                "gradient_clipping": 1.0, 
+                "prescale_gradients": False, 
+                "wall_clock_breakdown": False, 
+                "data_types": {
+                    "grad_accum_dtype": "fp32"
+                }, 
+                'train_micro_batch_size_per_gpu': TRAIN_MICRO_BATCH_SIZE,
+                'gradient_accumulation_steps': PROMPT_BATCH_SIZE // reward_dp_size // TRAIN_MICRO_BATCH_SIZE,
+                'train_batch_size': PROMPT_BATCH_SIZE,
+            },
+        ),
+    ),
+)
+
+
+# checkout generate config
+assert PROMPT_BATCH_SIZE % GENERATE_MICRO_BATCH_SIZE == 0
+assert PROMPT_BATCH_SIZE % POLICY_DP_SIZE == 0
+# checkout infer config
+assert PROMPT_BATCH_SIZE % (INFER_MICRO_BATCH_SIZE * POLICY_DP_SIZE) == 0
+assert PROMPT_BATCH_SIZE % (INFER_MICRO_BATCH_SIZE * CRITIC_DP_SIZE) == 0
+# checkout learn config
+assert (PROMPT_BATCH_SIZE + PRETRAIN_BATCH_SIZE) % (TRAIN_MICRO_BATCH_SIZE *
+                                                    POLICY_DP_SIZE) == 0
+assert (PROMPT_BATCH_SIZE) % (TRAIN_MICRO_BATCH_SIZE * CRITIC_DP_SIZE) == 0

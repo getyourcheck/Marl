@@ -9,6 +9,7 @@ from .config.config_utils import get_resource_requirement
 from .model_server import (BaseModelServer, CriticModelServer,
                            PolicyModelServer, RefModelServer,
                            RewardModelServer)
+from .model_backend import sp_util
 
 ROOT_PATH = Path(__file__).parents[1].resolve()
 
@@ -16,6 +17,7 @@ ROOT_PATH = Path(__file__).parents[1].resolve()
 class Coordinator:
 
     def __init__(self, cluster_address: str, configs: dict):
+        configs = sp_util.add_dispatch_config_if_needed(configs)
         self.cluster_address = cluster_address
         self.model_configs = configs['model_configs']
         self.tokenizer_config = configs.get('tokenizer_config', {})

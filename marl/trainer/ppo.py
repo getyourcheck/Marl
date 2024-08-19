@@ -22,6 +22,7 @@ class PPOTrainer:
             pretrain_criterion=PretrainLoss(label_smoothing=0),
             policy_criterion=PPOPolicyLoss(cliprange=0.2),
             critic_criterion=CriticLoss(cliprange_value=0.5),
+            use_varlen_attn=False,
             **kwargs,
     ):
 
@@ -43,6 +44,7 @@ class PPOTrainer:
         self.critic_micro_bs = critic_micro_bs
 
         self.critic_criterion = critic_criterion
+        self.use_varlen_attn = use_varlen_attn
 
     def policy_learn(self, trajectories, pretrain_data=None):
         if self.policy_minibatch is None:
@@ -78,6 +80,9 @@ class PPOTrainer:
                         mask=trajectories.action_mask[begin:end, :],
                     ),
                 ]
+                train_position_ids = [None]
+                cumulative_len = [None]
+                max_seqlen = [None]
                 # pretrain data
                 if pretrain_data is not None:
                     logger.info(
@@ -85,21 +90,27 @@ class PPOTrainer:
                         f'{pretrain_data["input_ids"].shape}')
                     train_input_ids.append(pretrain_data['input_ids'])
                     train_lables.append(pretrain_data['labels'])
-                    # train_position_ids.append(trajectories.pretrain_data["position_ids"])
-                    train_attention_mask.append(pretrain_data['attention_mask'])
+                    train_position_ids.append(pretrain_data["position_ids"])
+                    train_attention_mask.append(None)
                     train_criterion.append(self.pretrain_criterion)
                     loss_weights.append(self.pretrain_loss_weight)
                     micro_batch_size.append(self.policy_micro_bs)
+                    cumulative_len.append(pretrain_data['cumulative_len'])
+                    max_seqlen.append(pretrain_data['max_seqlen'])
 
                 with Timer('policy_model.train'):
                     p_loss = self.policy_model.train(
                         input_ids=train_input_ids,
                         labels=train_lables,
                         attention_mask=train_attention_mask,
-                        # position_ids=train_position_ids,
+                        position_ids=train_position_ids,
                         criterion=train_criterion,
                         loss_weights=loss_weights,
-                        micro_batch_size=micro_batch_size)
+                        micro_batch_size=micro_batch_size,
+                        cumulative_len = cumulative_len,
+                        max_seqlen = max_seqlen,
+                        use_varlen_attn = self.use_varlen_attn,
+                        )
                 if isinstance(p_loss, list):
                     ppo_loss.append(p_loss[0].item())
                     pretrain_loss.append(p_loss[1].item())

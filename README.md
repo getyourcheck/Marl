@@ -1,16 +1,19 @@
 # Marl: Models Augmented by Reinforcement Learning
 
 ## Usage
+### [火山云启动教程](https://aicarrier.feishu.cn/wiki/IEfmwZUONikqFpk6BQZchmz7nbc)
 
 ```bash
 
-# 跑通基于 Ray 的 PPO（使用example—7B config）
-nohup python -u main.py -c projects/internlm2/example_7B_ds_vllm_32gpu.py > nohup_7b.log 2>&1 &
+# 基于 Ray 的 PPO（使用 internlm2.5—7B config）
+nohup python -u main.py -c projects/internlm2_5/7B/7B_ppo_ds_vllm_48gpu_pretrain_align_s1rc11_s2rc13_rlrc1.py --work-dir $WORK_DIR > nohup_7b.log 2>&1 &
+
+# 启动实时评测
+bash tools/lanch_oc_eval.sh --work_dir $WORK_DIR --user lishuaibin
+
 ```
 
 ## WIP
-
-- [ ] support sp for hugging face
 - [ ] support internevo+vllm
 - [ ] mincro_batch remove padding while infering & training
 

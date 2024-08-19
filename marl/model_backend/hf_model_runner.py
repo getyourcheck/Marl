@@ -3,6 +3,7 @@ import os
 import socket
 from typing import Optional, Union
 
+from copy import deepcopy
 import ray
 import torch
 from accelerate import Accelerator
@@ -31,6 +32,13 @@ from .generate_utils import (get_answer_str, get_question_answer_mask,
 from .ray_actor_group import RayActorGroup
 from .ray_actor_mixin import RayActorMixin
 from .ray_utils import DEFAULT_NUM_CPUS, DEFAULT_NUM_GPUS, create_ray_actors
+from ..config.config_utils import get_sp_size
+from . import sp_util
+from xtuner.model.modules import dispatch_modules
+from xtuner.parallel.sequence import init_sequence_parallel
+from .sp_loss_util import reduce_sequence_parallel_loss
+
+from mmengine import MessageHub
 
 DEFAULT_NEW_TOKENS = 64
 MAXIMUM_NEW_TOKENS = 1024
@@ -73,6 +81,11 @@ class HfModelRunner:
         else:
             self.accelerator = Accelerator(mixed_precision=mixed_precision)
             self.zero_stage = 0
+        
+        self.sp_size = get_sp_size(self.model_config)
+        logger.info(f'self.sp_size: {self.sp_size}')
+        if self.sp_size > 1:
+            init_sequence_parallel(self.sp_size)
 
         # 1. Model
         model_path = self.model_config.get('model_path')
@@ -81,6 +94,7 @@ class HfModelRunner:
         use_flash_attn = self.model_config.get('use_flash_attn', None)
         model_class = self.model_config.get('model_class',
                                             AutoModelForCausalLM)
+        logger.info(f"load {self.model_type} model from {model_path} using model_class {model_class} .....")
         self.model: PreTrainedModel = model_class.from_pretrained(
             pretrained_model_name_or_path=model_path,
             device_map=None if self.zero_stage == 3 else 'auto',
@@ -89,6 +103,22 @@ class HfModelRunner:
             attn_implementation='flash_attention_2'
             if use_flash_attn else None,
         )
+
+        # TODO critic fc init
+        if self.model_type == "critic":
+            # exclude_keys = ["v_head.0.weight", "v_head.3.weight"]
+            exclude_keys = ["v_head.0.weight", ]
+            state_dict = self.model.state_dict()
+            for key in exclude_keys:
+                # state_dict[key] = torch.nn.init.zeros_(state_dict[key])
+                state_dict[key] = torch.nn.init.normal_(state_dict[key], mean=0.0, std=0.02)
+            self.model.load_state_dict(state_dict, strict=False)
+            logger.warning(f"[Critic model] init {exclude_keys} with zeros ...")
+
+        enable_xtuner_dispatch = self.model_config.get('enable_xtuner_dispatch', False)
+        if enable_xtuner_dispatch:
+            logger.info(f"invoking xtuner dispatch_modules for {self.model_type} model")
+            dispatch_modules(self.model.model)
 
         # Graident checkpointing
         gradient_checkpointing = self.model_config.get(
@@ -144,13 +174,13 @@ class HfModelRunner:
         self.device = self.accelerator.device
         set_seed(self.model_config.get('seed'))
         if mixed_precision is not None:
-            self.info_rank0(
+            logger.info(
                 f'[{self.model_type}]: Enable mixed_precision = {mixed_precision}'  # noqa: E501
             )
         if gradient_checkpointing:
-            self.info_rank0(
+            logger.info(
                 f'[{self.model_type}]: Enable gradient_checkpointing')
-        self.info_rank0(
+        logger.info(
             f'[{self.model_type}] __init__() done with optimizer {self.optimizer.optimizer}.'  # noqa: E501
         )
 
@@ -170,6 +200,7 @@ class HfModelRunner:
         position_ids: Optional[torch.Tensor] = None,
         criterion: Optional[_Loss] = None,
         loss_weight: Optional[float] = None,
+        loss_factor: Optional[float] = None,
         **_ignored,
     ) -> torch.Tensor:
         input_ids = input_ids.to(self.device)
@@ -189,12 +220,23 @@ class HfModelRunner:
         }
         self.model.train()
 
+        if self.sp_size > 1:
+            if isinstance(labels, dict):
+                # origin_mask = deepcopy(labels['mask'])
+                batch,  labels = sp_util.remove_paddings(batch, labels)
+                labels = sp_util.labels_add_paddings(batch['input_ids'], labels)
+                batch,  labels = sp_util.split_for_sp(batch, labels)
+                labels = sp_util.labels_remove_paddings(labels)
+            else:
+                batch,  labels = sp_util.split_for_sp(batch, labels)
+
         if criterion is None:
             # OPT. A) Default settings
             assert isinstance(
                 labels, torch.Tensor
             ), 'Please pass in `criterion` for non-tensor labels'
-            batch['labels'] = labels.to(self.device)
+            labels = labels.to(self.device)
+            batch['labels'] = labels
             fwd_output = self.model(**batch, use_cache=False)
             loss = fwd_output.loss
         elif isinstance(labels, torch.Tensor):
@@ -202,23 +244,34 @@ class HfModelRunner:
             # Adopted from: https://github.com/huggingface/transformers/blob/v4.38.2/src/transformers/models/llama/modeling_llama.py#L1199  # noqa: E501
             logits: torch.Tensor = self.model(**batch, use_cache=False).logits
             labels = labels.to(self.device)
-            loss = criterion(logits, labels)
+            loss = criterion(logits, labels, loss_factor)
         elif isinstance(labels, dict):
             # OPT. C) Use customized loss function, see loss/policy_loss.py
             logits: torch.Tensor = self.model(
                 **batch, use_cache=False, return_dict=True).logits
             for k, v in labels.items():
                 labels[k] = v.to(self.device)
-            loss = criterion(logits, labels)
+            loss = criterion(logits, labels, loss_factor)
         else:
             raise ValueError(f'labels of unsupported type: {type(labels)}')
+        
+        loss_type = criterion.loss_type
+        if self.sp_size > 1:
+            if isinstance(labels, dict):
+                loss_scale = labels['mask'].sum()
+            else:
+                loss_scale = (labels != -100).sum()
+
+            if loss_type == 'per_token':
+                loss_scale = torch.tensor(1).to(self.device)
+            loss = reduce_sequence_parallel_loss(loss, loss_scale)
 
         if loss_weight is not None:
             loss *= loss_weight
         return loss
 
     def parameter_update(self, step_interval=1):
-        self.info_rank0(f'[{self.model_type}] self.parameter_update()')
+        logger.info(f'[{self.model_type}] self.parameter_update()')
         self.update_step += 1
         if self.update_step % step_interval == 0:
             self.accelerator.clip_grad_norm_(self.model.parameters(),
@@ -237,10 +290,14 @@ class HfModelRunner:
         position_ids: Optional[Union[list[torch.Tensor], torch.Tensor]] = None,
         criterion: Optional[Union[list[_Loss], _Loss]] = None,
         loss_weights: Optional[Union[list[float], float]] = None,
+        loss_factor: Optional[Union[list[float], float]] = None,
         step_interval: int = 1,
         # None means using the entire input as one batch
         micro_batch_size: Optional[Union[list[int], int]] = None,
+        cumulative_len: Optional[list[list[torch.Tensor]]] = None,
+        max_seqlen: Optional[list[list[int]]] = None,
         debug=False,
+        use_varlen_attn=False,
         **_ignored,
     ):
         if isinstance(input_ids, torch.Tensor):
@@ -250,7 +307,10 @@ class HfModelRunner:
             position_ids = [position_ids]
             criterion = [criterion]
             loss_weights = [loss_weights]
+            loss_factor = [loss_factor]
             micro_batch_size = [micro_batch_size]
+            cumulative_len = [cumulative_len]
+            max_seqlen = [max_seqlen]
         else:
             if attention_mask is None:
                 attention_mask = [None for _ in range(len(input_ids))]
@@ -260,13 +320,23 @@ class HfModelRunner:
                 criterion = [None for _ in range(len(input_ids))]
             if loss_weights is None:
                 loss_weights = [None for _ in range(len(input_ids))]
+            if loss_factor is None:
+                loss_factor = [None for _ in range(len(input_ids))]
             if micro_batch_size is None:
                 micro_batch_size = [None for _ in range(len(input_ids))]
+            if cumulative_len is None:
+                cumulative_len = [None for _ in range(len(input_ids))]
+            if max_seqlen is None:
+                max_seqlen = [None for _ in range(len(input_ids))]
 
         assert isinstance(input_ids, list)
 
         loss_list = [[] for _ in range(len(input_ids))]
         for index in range(len(input_ids)):
+            varlen_attn_enable = (cumulative_len[index] is not None) and use_varlen_attn
+            if varlen_attn_enable:
+                dispatch_modules(self.model.model, use_varlen_attn=True)
+
             mb_size_entry = micro_batch_size[index]
             if mb_size_entry is None:
                 micro_batches: list[dict[str, torch.Tensor]] = []
@@ -283,13 +353,26 @@ class HfModelRunner:
                     attention_mask=attention_mask[index],
                     position_ids=position_ids[index],
                     labels=labels[index],
+                    cumulative_len = cumulative_len[index],
+                    max_seqlen=max_seqlen[index],
                 )
             loss_entry = []
             for mb_index, micro_batch in enumerate(micro_batches):
-                if mb_index == 0:
-                    self.info_rank0(
-                        f"[{self.model_type}] will train input_ids[{mb_index}] shape[{micro_batch['input_ids'].shape}] * {len(micro_batches)} times"  # noqa: E501
-                    )
+                logger.info(
+                    f"[{self.model_type}] will train input_ids[{mb_index}] shape[{micro_batch['input_ids'].shape}]"  # noqa: E501
+                )
+
+                if varlen_attn_enable:
+                    cumulative_len = micro_batch['cumulative_len']
+                    max_seqlen = micro_batch['max_seqlen']
+                    assert len(cumulative_len) == 1
+                    rank = os.getenv('RANK', '0')
+                    message_hub = MessageHub.get_instance('varlen_attn_args')
+                    cumulative_len = cumulative_len[0].to(self.device)
+                    message_hub.update_info(f'cumulative_len_rank_{rank}', cumulative_len)
+                    message_hub.update_info(f'max_seqlen_rank_{rank}', max_seqlen[0])
+                    logger.warning(f"verlen rank: {rank}, input_ids[{mb_index}] shape[{micro_batch['input_ids'].shape}], labels shape[{micro_batch['labels'].shape}]")
+
                 # compute loss and backward
                 loss = self.compute_loss(
                     input_ids=micro_batch['input_ids'],
@@ -298,12 +381,21 @@ class HfModelRunner:
                     position_ids=micro_batch['position_ids'],
                     criterion=criterion[index],
                     loss_weight=loss_weights[index],
+                    loss_factor=loss_factor[index]
                 )
                 self.accelerator.backward(loss)
                 loss_entry.append(loss)
                 if debug:
                     set_seed(1234)
+                if varlen_attn_enable:
+                    rank = os.getenv('RANK', '0')
+                    message_hub = MessageHub.get_instance('varlen_attn_args')
+                    message_hub.update_info(f'cumulative_len_rank_{rank}', None)
+                    message_hub.update_info(f'max_seqlen_rank_{rank}', None)
+
             loss_list[index] = sum(loss_entry) / len(loss_entry)
+            if varlen_attn_enable:
+                dispatch_modules(self.model.model, use_varlen_attn=False)
 
         self.parameter_update(step_interval)
         return loss_list if len(loss_list) > 1 else loss_list[0]
@@ -367,14 +459,15 @@ class HfModelRunner:
         debug=False,
         **_ignored,
     ) -> PolicyOutput:
-        self.info_rank0(
+        self.model.eval()
+        logger.info(
             f'[{self.model_type}] self.infer() kwargs: {infer_kwargs}')
         input_ids = input_ids.to(self.device)
         if attention_mask is not None:
             attention_mask = attention_mask.to(self.device)
         # returns entire-input-as-one-batch inference results
         if micro_batch_size < 0:
-            self.info_rank0(
+            logger.info(
                 f'[{self.model_type}] infer() input_ids.shape: {input_ids.shape}'  # noqa: E501
             )
             return self._infer(
@@ -396,7 +489,7 @@ class HfModelRunner:
             input_ids_mb = micro_batch['input_ids']
             attention_mask_mb = micro_batch['attention_mask']
             if index == 0:
-                self.info_rank0(
+                logger.info(
                     f'[{self.model_type}] will infer() input_ids_mb.shape: {input_ids_mb.shape} * {len(micro_batches)} times'  # noqa: E501
                 )
             policy_output_mb = self._infer(
@@ -452,7 +545,7 @@ class HfModelRunner:
         )
 
         output_ids = model_output['sequences']
-        self.info_rank0(
+        logger.info(
             f'generate input_ids shape:[{input_ids.shape}], output_ids shape:[{output_ids.shape}]'  # noqa: E501
         )
         output = PolicyOutput(output_ids=output_ids)
@@ -466,8 +559,7 @@ class HfModelRunner:
             )
         output['attention_mask'] = output.question_mask + output.answer_mask
         output['action_mask'] = output['attention_mask'][:,
-                                                         input_ids.size(1) -
-                                                         1:-1]
+                                                         input_ids.size(1):]
 
         if output_logits:
             output['logits'] = model_output['logits']  # tuple(torch.Tensor, )
@@ -508,7 +600,7 @@ class HfModelRunner:
         debug=False,
         **_ignored,
     ) -> PolicyOutput:
-        self.info_rank0(
+        logger.info(
             f'[{self.model_type}] self.generate() kwargs: {generate_kwargs}')
         input_ids = input_ids.to(self.device)
         if attention_mask is not None:
@@ -678,6 +770,7 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
         self.released = True
         num_gpus = get_gpu_requirement(config)
         self.dp_size = get_dp_size(config)
+        self.sp_size = get_sp_size(config)
         self.tokenizer_pad_token_id = config.tokenizer_config['pad_token_id']
         bundles = [{
             'CPU': DEFAULT_NUM_CPUS,
@@ -717,62 +810,103 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
         self.initialize_ref = None
 
     # Training
-    def train_async(self, input_ids, labels, attention_mask, position_ids,
+    def train_async(self, input_ids, labels, attention_mask, position_ids, micro_batch_size,
                     *args, **kwargs):
         if isinstance(input_ids, torch.Tensor):
-            micro_batch_size = input_ids.shape[0] // self.dp_size + (
+            # loss_factor for per_token loss
+            batch_size, seqlen = input_ids.shape
+            valid_tokens = labels["mask"].sum().cuda()
+            num_micro_bs = batch_size // micro_batch_size
+            loss_factor = torch.tensor(num_micro_bs * self.dp_size * self.sp_size / valid_tokens.item())
+
+            micro_dp_batch_size = input_ids.shape[0] // self.dp_size + (
                 input_ids.shape[0] % self.dp_size > 0
             )  # round up division, i.e., math.ceil(a / b)
             micro_batches = partition_by_micro_batch_size(
-                input_ids, micro_batch_size, attention_mask, position_ids,
-                labels)
+                input_ids=input_ids,
+                micro_batch_size=micro_dp_batch_size,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                labels=labels)
             assert len(micro_batches) == self.dp_size
-            return [
-                self.ray_actors[index].train.remote(
-                    input_ids=micro_batch['input_ids'],
-                    attention_mask=micro_batch['attention_mask'],
-                    position_ids=micro_batch['position_ids'],
-                    labels=micro_batch['labels'],
-                    *args,
-                    **kwargs,
-                ) for index, micro_batch in enumerate(micro_batches)
-            ]
+            object_refs = []
+            num_dp_actors = len(self.ray_actors) // self.dp_size
+            for dp_index, micro_batch in enumerate(micro_batches):
+                for i in range(num_dp_actors):
+                    rank = dp_index * num_dp_actors + i
+                    object_ref = self.ray_actors[rank].train.remote(
+                        input_ids=micro_batch['input_ids'],
+                        attention_mask=micro_batch['attention_mask'],
+                        position_ids=micro_batch['position_ids'],
+                        labels=micro_batch['labels'],
+                        loss_factor=loss_factor,
+                        micro_batch_size=micro_batch_size,
+                        *args,
+                        **kwargs,
+                    )
+                    object_refs.append(object_ref) 
+            return object_refs
         elif isinstance(input_ids, list):
+            cumulative_len = kwargs.pop('cumulative_len')
+            max_seqlen = kwargs.pop('max_seqlen')
             """a list of tensors whose training loss will be taken average."""
             assert isinstance(input_ids[0], torch.Tensor)
-            micro_batch_size = [i for i in range(len(input_ids))]
+            loss_factors = [None for _ in range(len(input_ids))]
+            for i in range(len(input_ids)):
+                batch_size, seqlen = input_ids[i].shape
+                if isinstance(labels[i], dict):
+                    valid_tokens = labels[i]["mask"].sum().cuda()
+                elif isinstance(labels[i], torch.Tensor):
+                    valid_tokens = (labels[i] != -100).sum()
+                num_micro_bs = batch_size // micro_batch_size[i]
+                loss_factors[i] = torch.tensor(num_micro_bs * self.dp_size * self.sp_size / valid_tokens.item())
+
+            micro_dp_batch_size = [i for i in range(len(input_ids))]
             for index, input_id in enumerate(input_ids):
-                micro_batch_size[index] = input_id.shape[0] // self.dp_size + (
+                micro_dp_batch_size[index] = input_id.shape[0] // self.dp_size + (
                     input_id.shape[0] % self.dp_size > 0
                 )  # round up division, i.e., math.ceil(a / b)
             micro_batches = partition_list_by_micro_batch_size(
                 input_ids=input_ids,
-                micro_batch_size=micro_batch_size,
+                micro_batch_size=micro_dp_batch_size,
                 labels=labels,
                 attention_mask=attention_mask,
                 position_ids=position_ids,
+                cumulative_len = cumulative_len,
+                max_seqlen = max_seqlen,
             )
             assert len(micro_batches) == self.dp_size
             object_refs = []
-            for index, micro_batch in enumerate(micro_batches):
-                input_ids_mb = []
-                attention_mask_mb = []
-                position_ids_mb = []
-                labels_mb = []
-                for i in range(len(micro_batch)):
-                    input_ids_mb.append(micro_batch[i]['input_ids'])
-                    attention_mask_mb.append(micro_batch[i]['attention_mask'])
-                    position_ids_mb.append(micro_batch[i]['position_ids'])
-                    labels_mb.append(micro_batch[i]['labels'])
-                object_ref = self.ray_actors[index].train.remote(
-                    input_ids=input_ids_mb,
-                    attention_mask=attention_mask_mb,
-                    position_ids=position_ids_mb,
-                    labels=labels_mb,
-                    *args,
-                    **kwargs,
-                )
-                object_refs.append(object_ref)
+            num_dp_actors = len(self.ray_actors) // self.dp_size
+            for dp_index, micro_batch in enumerate(micro_batches):
+                for i in range(num_dp_actors):
+                    rank = dp_index * num_dp_actors + i
+                    input_ids_mb = []
+                    attention_mask_mb = []
+                    position_ids_mb = []
+                    labels_mb = []
+                    cumulative_len_mb = []
+                    max_seqlen_mb = []
+                    for j in range(len(micro_batch)):
+                        input_ids_mb.append(micro_batch[j]['input_ids'])
+                        attention_mask_mb.append(micro_batch[j]['attention_mask'])
+                        position_ids_mb.append(micro_batch[j]['position_ids'])
+                        labels_mb.append(micro_batch[j]['labels'])
+                        cumulative_len_mb.append(micro_batch[j]['cumulative_len'])
+                        max_seqlen_mb.append(micro_batch[j]['max_seqlen'])
+                    object_ref = self.ray_actors[rank].train.remote(
+                        input_ids=input_ids_mb,
+                        attention_mask=attention_mask_mb,
+                        position_ids=position_ids_mb,
+                        labels=labels_mb,
+                        loss_factor=loss_factors,
+                        cumulative_len=cumulative_len_mb,
+                        max_seqlen=max_seqlen_mb,
+                        micro_batch_size=micro_batch_size,
+                        *args,
+                        **kwargs,
+                    )
+                    object_refs.append(object_ref) 
             return object_refs
 
     def train_get(self, object_refs, timeout=None):
@@ -790,6 +924,12 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
 
     # Inference
     def infer_async(self, input_ids, attention_mask, *args, **kwargs):
+        # temp add sp_size to dp_size when infer
+        self.origin_dp_size = self.dp_size
+        self.origin_sp_size = self.sp_size
+        self.dp_size = self.dp_size * self.sp_size
+        self.sp_size = 1
+
         micro_batch_size = input_ids.shape[0] // self.dp_size + (
             input_ids.shape[0] % self.dp_size > 0
         )  # round up division, i.e., math.ceil(a / b)
@@ -797,16 +937,26 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
                                                       micro_batch_size,
                                                       attention_mask)
         assert len(micro_batches) == self.dp_size
-        return [
-            self.ray_actors[index].infer.remote(
-                input_ids=micro_batch['input_ids'],
-                attention_mask=micro_batch['attention_mask'],
-                *args,
-                **kwargs,
-            ) for index, micro_batch in enumerate(micro_batches)
-        ]
+        object_refs = []
+        num_dp_actors = len(self.ray_actors) // self.dp_size
+        for dp_index, micro_batch in enumerate(micro_batches):
+            for i in range(num_dp_actors):
+                rank = dp_index * num_dp_actors + i
+                object_ref = self.ray_actors[rank].infer.remote(
+                    input_ids=micro_batch['input_ids'],
+                    attention_mask=micro_batch['attention_mask'],
+                    *args,
+                    **kwargs,
+                )
+                if i == 0:
+                   object_refs.append(object_ref) 
+        return object_refs
 
     def infer_get(self, object_refs, timeout=None):
+        # Modify back dp_size & sp_size
+        self.dp_size = self.origin_dp_size
+        self.sp_size = self.origin_sp_size
+
         outputs = ray.get(object_refs, timeout=timeout)
         return concat_policy_outputs(outputs)
 

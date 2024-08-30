@@ -4,15 +4,9 @@ from transformers import AutoConfig
 from ..tokenizer import encode_inputs
 from ..utils import expand_reward_token_id
 from .base_model_server import BaseModelServer
-from .utils import get_reward_model
 
 
 class RewardModelServer(BaseModelServer):
-    # Initialize
-    def get_model_class(self, model_path):
-        head_name = self.model_config.get('head_name', 'v_head')
-        return get_reward_model(model_path, head_name)
-
     def init_tokenizer_and_config(self, model_config):
         super().init_tokenizer_and_config(self.model_config)
 

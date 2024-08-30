@@ -21,6 +21,8 @@ from transformers.generation.utils import GenerateDecoderOnlyOutput
 from marl.config.config_consts import (ENGINE_PLUGIN_DDP, ENGINE_PLUGIN_DEEPSPEED,
                                     ENGINE_PLUGIN_FSDP)
 from marl.config.config_utils import get_dp_size, get_gpu_requirement
+from marl.modeling.builder import (build_critic_model, build_reward_model, 
+                                   build_language_model)
 from marl.policy_output import (PolicyOutput, concat_policy_outputs,
                              logprobs_from_logits)
 from marl.tokenizer import get_tokenizer
@@ -92,11 +94,7 @@ class HfModelRunner:
         self.model_type = self.model_config.get('model_type', '').lower()
         torch_dtype = self.model_config.get('torch_dtype', 'auto')
         use_flash_attn = self.model_config.get('use_flash_attn', None)
-        model_class = self.model_config.get('model_class',
-                                            AutoModelForCausalLM)
-        logger.info(f"load {self.model_type} model from {model_path} using model_class {model_class} .....")
-        self.model: PreTrainedModel = model_class.from_pretrained(
-            pretrained_model_name_or_path=model_path,
+        extra_kwargs = dict(
             device_map=None if self.zero_stage == 3 else 'auto',
             torch_dtype=torch_dtype,
             trust_remote_code=True,
@@ -104,16 +102,31 @@ class HfModelRunner:
             if use_flash_attn else None,
         )
 
-        # TODO critic fc init
         if self.model_type == "critic":
-            # exclude_keys = ["v_head.0.weight", "v_head.3.weight"]
-            exclude_keys = ["v_head.0.weight", ]
-            state_dict = self.model.state_dict()
-            for key in exclude_keys:
-                # state_dict[key] = torch.nn.init.zeros_(state_dict[key])
-                state_dict[key] = torch.nn.init.normal_(state_dict[key], mean=0.0, std=0.02)
-            self.model.load_state_dict(state_dict, strict=False)
-            logger.warning(f"[Critic model] init {exclude_keys} with zeros ...")
+            self.model = build_critic_model(
+                model_path, 
+                head_name=self.model_config.get('head_name', 'v_head'),
+                two_linear=self.model_config.get('two_linear', False),
+                extra_kwargs=extra_kwargs,
+                exclude_keys=self.model_config.get('exclude_keys', []),
+            )
+        elif self.model_type == "reward":
+            self.model = build_reward_model(
+                model_path, 
+                head_name=self.model_config.get('head_name', 'v_head'),
+                two_linear=self.model_config.get('two_linear', False),
+                extra_kwargs=extra_kwargs,
+            )
+        elif self.model_type == "reference" or self.model_type == "policy":
+            self.model = build_language_model(
+                model_path, 
+                extra_kwargs=extra_kwargs,
+            )
+        else:
+            raise ValueError(f'Unsupported model_type: {self.model_type}')
+        
+        if not self.zero_stage == 3:
+            self.model.to("cuda")
 
         enable_xtuner_dispatch = self.model_config.get('enable_xtuner_dispatch', False)
         if enable_xtuner_dispatch:

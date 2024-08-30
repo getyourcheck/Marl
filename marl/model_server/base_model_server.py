@@ -50,12 +50,7 @@ class BaseModelServer:
         trainer_config['tokenizer_path'] = tokenizer_config['tokenizer_path']
         trainer_config['model_path'] = model_path
         trainer_config['model_type'] = model_config['model_type']
-        trainer_config['model_class'] = self.get_model_class(model_path)
         self.trainer_config = trainer_config
-
-    def get_model_class(self, model_path):
-        # will be changed in subclasses
-        return AutoModelForCausalLM
 
     def initialize_async(self):
         self.init_tokenizer_and_config(self.model_config)

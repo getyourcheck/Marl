@@ -531,6 +531,7 @@ class HfModelRunner:
         output_logits=False,
         output_attentions=False,
         output_hidden_states=False,
+        output_logprobs=False,
         generate_kwargs: Optional[dict] = {},
     ) -> PolicyOutput:
         assert isinstance(input_ids, torch.Tensor)
@@ -550,7 +551,7 @@ class HfModelRunner:
             use_cache=True,
             max_new_tokens=max_new_tokens,
             return_dict_in_generate=True,
-            output_logits=output_logits,  # transformers >= 4.38.2
+            output_logits=(output_logits or output_logprobs),  # transformers >= 4.38.2
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             attention_mask=attention_mask,
@@ -573,6 +574,7 @@ class HfModelRunner:
         output['attention_mask'] = output.question_mask + output.answer_mask
         output['action_mask'] = output['attention_mask'][:,
                                                          input_ids.size(1):]
+        output['input_ids'] = input_ids
 
         if output_logits:
             output['logits'] = model_output['logits']  # tuple(torch.Tensor, )
@@ -580,6 +582,19 @@ class HfModelRunner:
             output['attentions'] = model_output['attentions']
         if output_hidden_states:
             output['hidden_states'] = model_output['hidden_states']
+        if output_logprobs:
+            action_start = input_ids.shape[1]
+            logprobs = []
+            for i in range(len(model_output['logits'])):
+                logits = model_output['logits'][i]
+                ids = model_output['sequences'][:, action_start+i]
+                logp = torch.nn.functional.log_softmax(logits, dim=1)
+                logp = logp.gather(1, ids.view(-1, 1))
+                logprobs.append(logp)
+            output['logprobs'] = torch.nn.functional.pad(
+                torch.cat(logprobs, dim=1),
+                (action_start, 0),
+                value=0.0)
         if output_str:  # customized post processing
             output['output_str'] = self.tokenizer.batch_decode(
                 output_ids,
@@ -608,6 +623,7 @@ class HfModelRunner:
         output_logits=False,
         output_attentions=False,
         output_hidden_states=False,
+        output_logprobs=False,
         chat_template=None,
         generate_kwargs: Optional[dict] = {},
         debug=False,
@@ -623,13 +639,14 @@ class HfModelRunner:
         if micro_batch_size < 0:
             return self._generate(
                 input_ids,
-                attention_mask,
-                step,
-                output_str,
-                output_logits,
-                output_attentions,
-                output_hidden_states,
-                generate_kwargs,
+                attention_mask=attention_mask,
+                step=step,
+                output_str=output_str,
+                output_logits=output_logits,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                output_logprobs=output_logprobs,
+                generate_kwargs=generate_kwargs,
             )
 
         micro_batches = partition_by_micro_batch_size(input_ids,
@@ -641,13 +658,14 @@ class HfModelRunner:
             attention_mask_mb = micro_batch['attention_mask']
             policy_output_mb = self._generate(
                 input_ids_mb,
-                attention_mask_mb,
-                step,
-                output_str,
-                output_logits,
-                output_attentions,
-                output_hidden_states,
-                generate_kwargs,
+                attention_mask=attention_mask_mb,
+                step=step,
+                output_str=output_str,
+                output_logits=output_logits,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                output_logprobs=output_logprobs,
+                generate_kwargs=generate_kwargs,
             )
             policy_outputs.append(policy_output_mb)
             if debug:

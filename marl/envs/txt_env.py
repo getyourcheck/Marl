@@ -69,6 +69,7 @@ class TxtEnv(EnvBase):
                 micro_batch_size=self.policy_micro_bs,
                 step=self.max_new_tokens,
                 output_str=True,
+                output_logprobs=True,
                 generate_kwargs=self.generate_kwargs)
         logger.info(f'[Generate] len: {len(prompt_input_messages)}')
 

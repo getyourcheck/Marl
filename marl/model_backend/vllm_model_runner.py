@@ -109,11 +109,14 @@ class VllmGenerator:
         output_logits=False,
         output_attentions=False,
         output_hidden_states=False,
+        output_logprobs=False,
         generate_kwargs: Optional[dict] = {},
         **_ignored,
     ) -> list[tuple[list[int], str]]:
         sp = VllmGenerator.get_sampling_params_from_dict(generate_kwargs)
         sp.max_tokens = step if step > 0 else None
+        if output_logprobs:
+            sp.logprobs = max(0, sp.logprobs or 0)
         logger.info(
             f'[{self.__class__.__name__}] self.generate() SamplingParams: {sp}'
         )
@@ -190,6 +193,13 @@ class VllmGenerator:
                 raise NotImplementedError('TODO: output_attentions')
             if output_hidden_states:
                 raise NotImplementedError('TODO: output_hidden_states')
+            if output_logprobs:
+                logprobs = [0.0] * max_inputs_length
+                for output_logprob in req_output.outputs[0].logprobs:
+                    # Typically, the first element in dict is the chosen token
+                    value = list(output_logprob.values())[0]
+                    logprobs.append(value)
+                output['logprobs'] = torch.tensor(logprobs).unsqueeze(0)
             if output_str:  # return list[str]
                 output['output_ans_str'] = [req_output.outputs[0].text]
                 output_str = self.tokenizer.decode(

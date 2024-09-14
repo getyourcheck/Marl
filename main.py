@@ -181,6 +181,12 @@ if __name__ == '__main__':
             pretrain_loss=pt_loss,
             critic_loss=critic_loss,
         )
+        if trajectories.get('kl(gen, train)') is not None:
+            kl = trajectories['kl(gen, train)']
+            summaries['kl(gen, train)'] = kl.mean().item()
+        if trajectories.get('entropy(gen)') is not None:
+            entropy = trajectories['entropy(gen)']
+            summaries['entropy(gen)'] = entropy.mean().item()
         with open(f'{work_dir}/train_rlhf.log.jsonl', 'a') as f:
             f.write(json.dumps(summaries) + '\n')
         logger_train.info(f'[end to end] duration: {time.time() - s_t} s')

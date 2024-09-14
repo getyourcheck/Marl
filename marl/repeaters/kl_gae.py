@@ -58,6 +58,14 @@ class KLGAERepeater(RepeaterBase):
         trajectories['kl'] = (kl_distance * action_mask).sum(
             axis=-1) / action_mask.sum(axis=-1)
         trajectories['entropy'] = entropy
+        if trajectories.logprobs is not None:
+            gen_logprobs = trajectories.logprobs[:, -num_actions:]
+            mask_size = action_mask.sum(axis=-1)
+            ratio_gen = (gen_logprobs - policy_logprobs) * action_mask
+            kl_gen = ratio_gen.sum(axis=-1) / mask_size
+            trajectories['kl(gen, train)'] = kl_gen
+            entropy_gen = -gen_logprobs * action_mask
+            trajectories['entropy(gen)'] = entropy_gen.sum(axis=-1) / mask_size
         trajectories['kl_rewards'] = kl_rewards
         trajectories['policy_logprobs'] = policy_logprobs
         trajectories['ref_logprobs'] = ref_logprobs

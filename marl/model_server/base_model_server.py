@@ -43,18 +43,18 @@ class BaseModelServer:
         tokenizer_config['pad_token_id'] = self.tokenizer.pad_token_id
         self.tokenizer_config = tokenizer_config
 
-    def init_trainer_config(self, model_config, tokenizer_config):
+    def init_trainer_config(self, model_config):
         model_path = model_config['model_path']
         trainer_config: dict = model_config['trainer_config']  # requisite
-        trainer_config['tokenizer_config'] = tokenizer_config
-        trainer_config['tokenizer_path'] = tokenizer_config['tokenizer_path']
+        trainer_config['tokenizer_config'] = self.tokenizer_config
+        trainer_config['tokenizer_path'] = self.tokenizer_config['tokenizer_path']
         trainer_config['model_path'] = model_path
         trainer_config['model_type'] = model_config['model_type']
         self.trainer_config = trainer_config
 
     def initialize_async(self):
         self.init_tokenizer_and_config(self.model_config)
-        self.init_trainer_config(self.model_config, self.tokenizer_config)
+        self.init_trainer_config(self.model_config)
 
         trainer_type = self.trainer_config.get('trainer_type',
                                                ENGINE_HUGGINGFACE).lower()

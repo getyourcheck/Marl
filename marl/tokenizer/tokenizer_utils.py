@@ -44,7 +44,11 @@ def get_tokenizer(
             'Using a slow tokenizer. This might cause a significant '
             'slowdown. Consider using a fast tokenizer instead.')
     for key, value in kwargs.items():
-        setattr(tokenizer, key, value)
+        try:
+            setattr(tokenizer, key, value)
+        except:
+            logger.warning(f"set {value} for {key} failed ... ")
+    tokenizer.add_special_tokens({'pad_token' : tokenizer.pad_token})
     return tokenizer
 
 

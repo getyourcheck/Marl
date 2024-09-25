@@ -19,6 +19,8 @@ from .ray_actor_mixin import RayActorMixin
 from .ray_utils import DEFAULT_NUM_CPUS, DEFAULT_NUM_GPUS, set_runtime_env
 
 VLLM_DEFAULT_DEVICE = 'cuda'
+import vllm
+vllm_version = vllm.__version__
 
 
 class VllmGenerator:
@@ -37,7 +39,7 @@ class VllmGenerator:
 
         import vllm
 
-        if '0.2.7' <= vllm.__version__ <= '0.3.3' and tensor_parallel_size != 1:  # noqa: E501
+        if '0.2.7' <= vllm_version <= '0.3.3' and tensor_parallel_size != 1:  # noqa: E501
             # NOTE: In 0.2.7, vLLM made a major change to its architecture which move one worker into the driver process.  # noqa: E501
             # Driver process will manually set CUDA_VISIBLE_DEVICES before worker init. To avoid importing torch before  # noqa: E501
             # set CUDA_VISIBLE_DEVICES, we must defer monkey patch.
@@ -52,6 +54,8 @@ class VllmGenerator:
                 worker.Worker = VllmWorkerWrap
 
             vllm.engine.llm_engine.set_cuda_visible_devices = _set_cuda_visible_devices  # noqa: E501
+        elif (vllm_version >= '0.6.1') and (tensor_parallel_size != 1):
+            raise NotImplementedError
         else:
             from vllm.worker import worker
 
@@ -72,17 +76,26 @@ class VllmGenerator:
         tokenizer_config = self.model_config.get('tokenizer_config', {})
         for key, value in tokenizer_config.items():
             setattr(self.tokenizer, key, value)
+        self.tokenizer.add_special_tokens({'pad_token' : self.tokenizer.pad_token})
 
     @staticmethod
     def get_sampling_params_from_dict(generate_kwargs: dict) -> SamplingParams:
-        sp = SamplingParams()
+        sp_kwargs = {}
+        tmp_sp = SamplingParams()
         for k, v in generate_kwargs.items():
-            if k in sp.__dict__:
-                sp.__dict__[k] = v
+            if k in dir(tmp_sp):
+                sp_kwargs[k] = v
             elif k == 'num_beams' and v > 1:
-                sp.__dict__['use_beam_search'] = True
+                sp_kwargs['use_beam_search'] = True
             elif k == 'eos_token_id':
-                sp.__dict__['stop_token_ids'] = [v]
+                if isinstance(v, int):
+                    sp_kwargs['stop_token_ids'] = [v]
+                elif isinstance(v, list):
+                    sp_kwargs['stop_token_ids'] = v
+                else:
+                    raise NotImplementedError
+        sp_kwargs['skip_special_tokens'] = True
+        sp = SamplingParams(**sp_kwargs)
 
         sp.top_k = -1 if sp.top_k <= 1 else sp.top_k
         sp._verify_args()
@@ -176,12 +189,14 @@ class VllmGenerator:
             output['output_ids'] = torch.tensor(output_ids).to(
                 torch.long).unsqueeze(0)
 
+            if self.tokenizer.pad_token_id != generate_kwargs.get('pad_token_id', self.tokenizer.pad_token_id):
+                logger.warning(f"tokenizer.pad_token_id != generate_kwargs['pad_token_id'], using tokenizer.pad_token_id to pad")
             output['question_mask'], output[
                 'answer_mask'] = get_question_answer_mask(
                     output['input_ids'],
                     output['output_ids'],
                     tokenizer_pad_token_id=self.tokenizer.pad_token_id,
-                    generate_pad_token_id=generate_kwargs.get('pad_token_id'),
+                    # generate_pad_token_id=generate_kwargs.get('pad_token_id'),
                 )
             output[
                 'attention_mask'] = output.question_mask + output.answer_mask  # noqa: E501
@@ -198,7 +213,11 @@ class VllmGenerator:
                 for output_logprob in req_output.outputs[0].logprobs:
                     # Typically, the first element in dict is the chosen token
                     value = list(output_logprob.values())[0]
-                    logprobs.append(value)
+                    if type(value).__name__ == 'Logprob':
+                        logprob = value.logprob
+                    elif isinstance(value, float):
+                        logprob = value
+                    logprobs.append(logprob)
                 output['logprobs'] = torch.tensor(logprobs).unsqueeze(0)
             if output_str:  # return list[str]
                 output['output_ans_str'] = [req_output.outputs[0].text]
@@ -223,18 +242,29 @@ class VllmGeneratorRayActor(VllmGenerator, RayActorMixin):
     # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_engine.py  # noqa: E501
     def init_process_group(self, master_address, master_port, rank_offset,
                            world_size, group_name):
-        return self.llm.llm_engine._run_workers(
-            'init_process_group',
-            master_address,
-            master_port,
-            rank_offset,
-            world_size,
-            group_name,
-        )
+        if vllm_version >= '0.6.1':
+            return self.llm.llm_engine.model_executor.driver_worker.init_process_group(
+                    master_address, master_port, rank_offset, world_size, group_name)
+        elif '0.2.7' <= vllm_version <= '0.3.3':
+            return self.llm.llm_engine._run_workers(
+                'init_process_group',
+                master_address,
+                master_port,
+                rank_offset,
+                world_size,
+                group_name,
+            )
+        else:
+            raise NotImplementedError
 
     def update_weight(self, name, dtype, shape, empty_cache=False):
-        return self.llm.llm_engine._run_workers('update_weight', name, dtype,
-                                                shape, empty_cache)
+        if vllm_version >= '0.6.1':
+            return self.llm.llm_engine.model_executor.driver_worker.update_weight(name, dtype, shape, empty_cache)
+        elif '0.2.7' <= vllm_version <= '0.3.3':
+            return self.llm.llm_engine._run_workers('update_weight', name, dtype,
+                                                    shape, empty_cache)
+        else:
+            raise NotImplementedError
 
 
 class VllmGeneratorRayActorGroup(RayActorGroup):
@@ -245,7 +275,6 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
         self.config = config
         self.tp_size = get_tp_size(config)  # tensor parallelism
         self.dp_size = get_dp_size(config)  # num of vllm_engines
-        self.tokenizer_pad_token_id = config.tokenizer_config['pad_token_id']
         self.ray_actors: list[VllmGeneratorRayActor] = []  # i.e., vllm_engines
 
         # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_engine.py  # noqa: E501

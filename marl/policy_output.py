@@ -109,10 +109,10 @@ def concat_policy_outputs(policy_outputs: list[PolicyOutput],
 def padding_policy_outputs(policy_outputs: list[PolicyOutput],
                            padding_token_map={},
                            right_padding=True,
-                           padding_id=0):
+                           default_padding_id=0):
     tensor_keys = union_tensor_keys_from_policy_outputs(policy_outputs)
     for key in tensor_keys:
-        padding_id = padding_token_map.get(key, padding_id)
+        padding_id = padding_token_map.get(key, default_padding_id)
         max_seq_len = find_max_seq_len(policy_outputs, key)
         for policy_output in policy_outputs:
             origin_tensor = policy_output[key]

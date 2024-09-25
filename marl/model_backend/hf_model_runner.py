@@ -234,14 +234,15 @@ class HfModelRunner:
         self.model.train()
 
         if self.sp_size > 1:
+            padding_value_dict = {'batch': self.tokenizer.pad_token_id, 'tensor_label': -100}
             if isinstance(labels, dict):
                 # origin_mask = deepcopy(labels['mask'])
                 batch,  labels = sp_util.remove_paddings(batch, labels)
                 labels = sp_util.labels_add_paddings(batch['input_ids'], labels)
-                batch,  labels = sp_util.split_for_sp(batch, labels)
+                batch,  labels = sp_util.split_for_sp(batch, labels, padding_value_dict)
                 labels = sp_util.labels_remove_paddings(labels)
             else:
-                batch,  labels = sp_util.split_for_sp(batch, labels)
+                batch,  labels = sp_util.split_for_sp(batch, labels, padding_value_dict)
 
         if criterion is None:
             # OPT. A) Default settings
@@ -693,9 +694,9 @@ class HfModelRunner:
         set_seed(seed)
 
     def save(self, path):
-        # for resume
-        self.accelerator.wait_for_everyone()
-        self.accelerator.save_state(os.path.join(path, 'saved_state'))
+        # # for resume
+        # self.accelerator.wait_for_everyone()
+        # self.accelerator.save_state(os.path.join(path, 'saved_state'))
 
         # save model, tokenizer, step
         if not self.accelerator.is_main_process:
@@ -802,7 +803,6 @@ class HfModelRunnerRayActorGroup(RayActorGroup):
         num_gpus = get_gpu_requirement(config)
         self.dp_size = get_dp_size(config)
         self.sp_size = get_sp_size(config)
-        self.tokenizer_pad_token_id = config.tokenizer_config['pad_token_id']
         bundles = [{
             'CPU': DEFAULT_NUM_CPUS,
             'GPU': DEFAULT_NUM_GPUS

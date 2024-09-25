@@ -61,7 +61,7 @@ class Coordinator:
         self.model_dict = {}
         for model_name, model_config in self.model_configs.items():
             model_type = model_config['model_type']
-            model_config['tokenizer_config'] = self.tokenizer_config
+            model_config['tokenizer_config'] = model_config.get('tokenizer_config', self.tokenizer_config)
             if model_type == MODEL_TYPE_POLICY:
                 self.model_dict[model_name] = PolicyModelServer(
                     model_name, model_config)

@@ -6,7 +6,7 @@ import torch.nn as nn
 from loguru import logger
 
 from transformers.modeling_utils import no_init_weights
-from transformers import AutoConfig, AutoModel
+from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.modeling_outputs import SequenceClassifierOutputWithPast
 
@@ -61,7 +61,7 @@ def build_critic_model(
         # state_dict[key] = torch.nn.init.zeros_(state_dict[key])
         state_dict[key] = torch.nn.init.normal_(state_dict[key], mean=0.0, std=0.02)
     model.load_state_dict(state_dict, strict=False)
-    logger.warning(f"[Critic model] init {exclude_keys} with zeros ...")
+    logger.warning(f"[Critic model] init {exclude_keys} with normal ...")
     return model
 
 
@@ -121,9 +121,13 @@ def build_language_model(model_path, extra_kwargs={}):
             model = InternLM2ForCausalLM(config)
         # load model weights
         model = model.from_pretrained(model_path, **extra_kwargs)
+    elif model_type == "llama":
+        logger.info(f"Loading Llama model from {model_path}")
+        from transformers import LlamaForCausalLM
+        model = LlamaForCausalLM.from_pretrained(model_path, **extra_kwargs)
     else:
         logger.info(f"Loading AutoModel from {model_path}")
-        model = AutoModel.from_pretrained(model_path, **extra_kwargs)
+        model = AutoModelForCausalLM.from_pretrained(model_path, **extra_kwargs)
     return model
 
 

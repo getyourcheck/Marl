@@ -2,7 +2,6 @@
 import importlib
 
 import torch
-from vllm.model_executor.weight_utils import hf_model_weights_iterator
 from vllm.worker.worker import Worker
 
 from ..logger import init_logger
@@ -10,37 +9,40 @@ from .dist_utils import init_process_group
 
 logger = init_logger(__name__)
 
-
-def _hf_model_weights_iterator_wrap(model_name_or_path, *args, **kwargs):
-    if isinstance(model_name_or_path, dict):
-        yield from model_name_or_path.items()
-    else:
-        yield from hf_model_weights_iterator(model_name_or_path, *args,
-                                             **kwargs)
+import vllm
+vllm_version = vllm.__version__
 
 
 class VllmWorkerWrap(Worker):
 
     def __init__(self, *args, **kwargs):
-        # Monkey patch hf_model_weights_iterator to allow update single weight
-        # NOTE: In 0.2.5, vLLM introduce lazy model loader
-        # https://github.com/vllm-project/vllm/pull/2044
-        from vllm.model_executor.models import _MODELS, ModelRegistry
+        if '0.2.7' <= vllm_version <= '0.3.3':
+            from vllm.model_executor.weight_utils import hf_model_weights_iterator
+            def _hf_model_weights_iterator_wrap(model_name_or_path, *args, **kwargs):
+                if isinstance(model_name_or_path, dict):
+                    yield from model_name_or_path.items()
+                else:
+                    yield from hf_model_weights_iterator(model_name_or_path, *args,
+                                                         **kwargs)
+            # Monkey patch hf_model_weights_iterator to allow update single weight
+            # NOTE: In 0.2.5, vLLM introduce lazy model loader
+            # https://github.com/vllm-project/vllm/pull/2044
+            from vllm.model_executor.models import _MODELS, ModelRegistry
 
-        load_model_cls = ModelRegistry.load_model_cls
+            load_model_cls = ModelRegistry.load_model_cls
 
-        def patched_load_model_cls(model_arch: str):
-            module_name, _ = _MODELS[model_arch]
-            module = importlib.import_module(
-                f'vllm.model_executor.models.{module_name}')
-            module.hf_model_weights_iterator = _hf_model_weights_iterator_wrap
-            logger.info(
-                f'Monkey patch hf_model_weights_iterator for module {module_name}'  # noqa: E501
-            )
+            def patched_load_model_cls(model_arch: str):
+                module_name, _ = _MODELS[model_arch]
+                module = importlib.import_module(
+                    f'vllm.model_executor.models.{module_name}')
+                module.hf_model_weights_iterator = _hf_model_weights_iterator_wrap
+                logger.info(
+                    f'Monkey patch hf_model_weights_iterator for module {module_name}'  # noqa: E501
+                )
 
-            return load_model_cls(model_arch)
+                return load_model_cls(model_arch)
 
-        ModelRegistry.load_model_cls = patched_load_model_cls
+            ModelRegistry.load_model_cls = patched_load_model_cls
 
         super().__init__(*args, **kwargs)
 
@@ -72,6 +74,11 @@ class VllmWorkerWrap(Worker):
 
         weight = torch.empty(shape, dtype=dtype, device='cuda')
         torch.distributed.broadcast(weight, 0, group=self._model_update_group)
-        self.model_runner.model.load_weights(model_name_or_path={name: weight})
+        if '0.2.7' <= vllm_version <= '0.3.3':
+            self.model_runner.model.load_weights(model_name_or_path={name: weight})
+        elif vllm_version >= '0.6.1':
+            self.model_runner.model.load_weights(weights=[(name, weight)])
+        else:
+            raise NotImplementedError
 
         del weight

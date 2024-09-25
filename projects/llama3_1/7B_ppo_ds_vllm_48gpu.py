@@ -4,14 +4,14 @@
 MAX_PROMPT_LEN = 1024
 MAX_ANSWER_LEN = 1024
 MAX_PRETRAIN_LEN = 32 * 1024
-packed_data = True
-use_varlen_attn = True
+packed_data = False
+use_varlen_attn = False
 
 PROMPT_BATCH_SIZE = 512
-PRETRAIN_BATCH_SIZE = 16
+PRETRAIN_BATCH_SIZE = 0
 
 GENERATE_MICRO_BATCH_SIZE = 8
-INFER_MICRO_BATCH_SIZE = 8
+INFER_MICRO_BATCH_SIZE = 1
 TRAIN_MICRO_BATCH_SIZE = 1
 
 
@@ -24,40 +24,45 @@ use_flash_attn = True
 gradient_checkpointing = True
 vllm_dp_size = 8
 vllm_tp_size = 1
-sp_size = 2
+sp_size = 1
 
 
 resume_step = -1
-reference_model_path = '/fs-computility/llm/shared/lishuaibin/ckpts/gitlab_marl/7B/internlm2_5/aliyun_internlm2_5_boost1_7B_FT_s1_20240621rc11_s2_20240612rc13_379_hf/'
+reference_model_path = '/fs-computility/llm/shared/lishuaibin/hf_models/Meta-Llama-3.1-8B-Instruct/'
+# reference_model_path = '/fs-computility/llm/shared/lishuaibin/ckpts/gitlab_marl/7B/internlm2_5/aliyun_internlm2_5_boost1_7B_FT_s1_20240621rc11_s2_20240612rc13_379_hf/'
 policy_model_path = reference_model_path
+critic_model_path = reference_model_path
+
 reward_model_path = '/fs-computility/llm/shared/lishuaibin/ckpts/gitlab_marl/7B/internlm2_5/R-Ampere-7B-8k-D20240617-v1_607_hf/'
-critic_model_path = reward_model_path
+# critic_model_path = reward_model_path
 
 
 MODEL_DTYPE = 'auto'
 
-tokenizer_config = dict(
-    pad_token_id=0,
-    eos_token_id=92542,
-    padding_side='left',
-)
 
+tokenizer_config = dict(
+                    pad_token_id=128009,
+                    bos_token_id=128000,
+                    eos_token_id=[128001, 128008, 128009],
+                    padding_side='left',
+                )
 rollout_config = dict(
     policy_micro_bs=GENERATE_MICRO_BATCH_SIZE,
     reward_micro_bs=GENERATE_MICRO_BATCH_SIZE,
     max_new_tokens=MAX_ANSWER_LEN,
     write_to_file=True,
-    generate_kwargs={
-        'do_sample': True,
-        'temperature': 1.0,
-        'top_k': -1,
-        'top_p': 0.9,
-        'min_new_tokens': 1,
-        'num_beams': 1,
-        'early_stopping': False,
-        'eos_token_id': 92542,
-        'pad_token_id': 0,
-    },
+    async_reward=True,
+    generate_kwargs=dict(
+        do_sample=True,
+        temperature=1.0,
+        top_k=-1,
+        top_p=0.9,
+        min_new_tokens=1,
+        num_beams=1,
+        early_stopping=False,
+        eos_token_id=[128001, 128008, 128009],
+        pad_token_id=128009,
+    ),
 )
 
 repeater_config = dict(
@@ -87,6 +92,7 @@ train_config = dict(
     policy_criterion=PPOPolicyLoss(cliprange=0.2, loss_type="per_token"),
     critic_criterion=CriticLoss(cliprange_value=0.5, loss_type="per_token"),
 )
+
 
 prompt_dataset_config = dict(
     samples_each_epoch=PROMPT_BATCH_SIZE,
@@ -161,7 +167,12 @@ model_configs = dict(
     policy=dict(
         model_path=policy_model_path,
         model_type='policy',
-        tokenizer_config=tokenizer_config,
+        tokenizer_config = dict(
+                            pad_token_id=128009,
+                            bos_token_id=128000,
+                            eos_token_id=[128001, 128008, 128009],
+                            padding_side='left',
+                        ),
         trainer_config=dict(
             torch_dtype=MODEL_DTYPE,
             trainer_type='huggingface',
@@ -222,10 +233,16 @@ model_configs = dict(
     critic=dict(
         model_path=critic_model_path,
         model_type='critic',
+        tokenizer_config = dict(
+                            pad_token_id=128009,
+                            # bos_token_id=128000,
+                            # eos_token_id=[128001, 128008, 128009],
+                            padding_side='left',
+                        ),
         trainer_config=dict(
             head_name='v_head',
-            two_linear=True,
-            exclude_keys=["v_head.0.weight", ],
+            two_linear=False,
+            exclude_keys=["v_head.weight", ],
             torch_dtype=MODEL_DTYPE,
             trainer_type='huggingface',
             use_flash_attn=use_flash_attn,
@@ -275,6 +292,12 @@ model_configs = dict(
     reference=dict(
         model_path=reference_model_path,
         model_type='reference',
+        tokenizer_config = dict(
+                            pad_token_id=128009,
+                            # bos_token_id=128000,
+                            # eos_token_id=[128001, 128008, 128009],
+                            padding_side='left',
+                        ),
         trainer_config=dict(
             torch_dtype=MODEL_DTYPE,
             use_flash_attn=use_flash_attn,
@@ -317,6 +340,11 @@ model_configs = dict(
     reward=dict(
         model_path=reward_model_path,
         model_type='reward',
+        tokenizer_config = dict(
+                            pad_token_id=0,
+                            eos_token_id=92542,
+                            padding_side='left',
+                        ),
         trainer_config=dict(
             head_name='v_head',
             two_linear=True,

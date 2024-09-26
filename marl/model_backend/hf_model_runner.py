@@ -234,7 +234,7 @@ class HfModelRunner:
         self.model.train()
 
         if self.sp_size > 1:
-            padding_value_dict = {'batch': self.tokenizer.pad_token_id, 'tensor_label': -100}
+            padding_value_dict = {'input_ids': self.tokenizer.pad_token_id, 'tensor_label': -100, 'default': 0}
             if isinstance(labels, dict):
                 # origin_mask = deepcopy(labels['mask'])
                 batch,  labels = sp_util.remove_paddings(batch, labels)

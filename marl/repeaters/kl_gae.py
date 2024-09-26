@@ -112,7 +112,7 @@ class KLGAERepeater(RepeaterBase):
         # Experimental
 
         clipped_rewards = torch.clamp(
-            rewards, min=self.clip_reward_min, max=self.clip_reward_max)
+            trajectories['rewards'], min=self.clip_reward_min, max=self.clip_reward_max)
         trajectories['clipped_rewards'] = clipped_rewards
 
         if self.norm_rewards:

@@ -69,7 +69,7 @@ def labels_add_paddings(input_ids, labels):
     return new_labels
 
 
-def split_for_sp(batch, labels, padding_value_dict={'batch': 0, 'tensor_label': -100}):
+def split_for_sp(batch, labels, padding_value_dict={'tensor_label': -100, 'default': 0}):
     batch, labels = pad_for_sp(batch, labels, padding_value_dict)
     sp_group = get_sequence_parallel_group()
     for key in batch.keys():
@@ -87,12 +87,12 @@ def split_for_sp(batch, labels, padding_value_dict={'batch': 0, 'tensor_label': 
 def pad_for_sp(batch, labels, padding_value_dict):
     for key in batch.keys():
         if batch[key] is not None:
-            batch[key] = pad_for_sequence_parallel(batch[key], padding_value=padding_value_dict['batch'], dim=-1)
+            batch[key] = pad_for_sequence_parallel(batch[key], padding_value=padding_value_dict.get(key, padding_value_dict['default']), dim=-1)
     if isinstance(labels, torch.Tensor):
-        labels = pad_for_sequence_parallel(labels, padding_value=padding_value_dict['tensor_label'], dim=-1)
+        labels = pad_for_sequence_parallel(labels, padding_value=padding_value_dict.get('tensor_label', -100), dim=-1)
     elif isinstance(labels, dict):
         for key in labels.keys():
-            labels[key] = pad_for_sequence_parallel(labels[key], padding_value=padding_value_dict['batch'], dim=-1)
+            labels[key] = pad_for_sequence_parallel(labels[key], padding_value=padding_value_dict.get(key, padding_value_dict['default']), dim=-1)
     return batch, labels
 
 def add_dispatch_config_if_needed(conf: Config) -> Config:

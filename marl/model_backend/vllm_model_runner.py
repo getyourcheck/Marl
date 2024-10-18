@@ -28,18 +28,21 @@ class VllmGenerator:
     def __init__(self, model_config) -> None:
         self.model_config: dict = model_config
 
-    # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_engine.py  # noqa: E501
-    def initialize(self) -> None:
-        model_path = self.model_config.get('model_path')
-        torch_dtype = self.model_config.get('torch_dtype', 'auto')
-        tokenizer_path = self.model_config.get('tokenizer_path', model_path)
+        self.model_path = self.model_config.get('model_path')
+        self.torch_dtype = self.model_config.get('torch_dtype', 'auto')
+        self.tokenizer_path = self.model_config.get('tokenizer_path', self.model_path)
         parallel: dict = self.model_config.get('parallel')
-        tensor_parallel_size = 1 if parallel is None else parallel['tensor'][
+        self.tensor_parallel_size = 1 if parallel is None else parallel['tensor'][
             'size']
 
-        import vllm
+        self.distributed_executor_backend = None
+        if (vllm_version >= '0.6.1') and (self.tensor_parallel_size != 1):
+            self.distributed_executor_backend = 'ray'
 
-        if '0.2.7' <= vllm_version <= '0.3.3' and tensor_parallel_size != 1:  # noqa: E501
+    # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_engine.py  # noqa: E501
+    def initialize(self, *args, **kwargs) -> None:
+
+        if '0.2.7' <= vllm_version <= '0.3.3' and self.tensor_parallel_size != 1:  # noqa: E501
             # NOTE: In 0.2.7, vLLM made a major change to its architecture which move one worker into the driver process.  # noqa: E501
             # Driver process will manually set CUDA_VISIBLE_DEVICES before worker init. To avoid importing torch before  # noqa: E501
             # set CUDA_VISIBLE_DEVICES, we must defer monkey patch.
@@ -48,29 +51,45 @@ class VllmGenerator:
                 os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(
                     map(str, device_ids))
                 from vllm.worker import worker
-
                 from .vllm_worker_wrap import VllmWorkerWrap
 
                 worker.Worker = VllmWorkerWrap
 
             vllm.engine.llm_engine.set_cuda_visible_devices = _set_cuda_visible_devices  # noqa: E501
-        elif (vllm_version >= '0.6.1') and (tensor_parallel_size != 1):
-            raise NotImplementedError
-        else:
-            from vllm.worker import worker
+        elif (vllm_version >= '0.6.1') and (self.tensor_parallel_size != 1):
+            self.distributed_executor_backend = 'ray'
 
+            from vllm.worker import worker
             from .vllm_worker_wrap import VllmWorkerWrap
 
             worker.Worker = VllmWorkerWrap
+            
+            # RayGPUExecutor
+            # See the patch https://github.com/vllm-project/vllm/commit/479d69fad0538f04cb22bf13e76ff91cfeb8a4e5
+            RayWorkerWrapperPath = vllm.executor.ray_utils
+            class RayWorkerWrapper(RayWorkerWrapperPath.RayWorkerWrapper):
+                def __init__(self, *args, **kwargs) -> None:
+                    kwargs["worker_module_name"] = "marl.model_backend.vllm_worker_wrap"
+                    kwargs["worker_class_name"] = "VllmWorkerWrap"
+                    super().__init__(*args, **kwargs)
+
+            RayWorkerWrapperPath.RayWorkerWrapper = RayWorkerWrapper
+
+            # raise NotImplementedError
+        else:
+            from vllm.worker import worker
+            from .vllm_worker_wrap import VllmWorkerWrap
+            worker.Worker = VllmWorkerWrap
 
         self.llm: LLM = vllm.LLM(
-            model=model_path,
-            tokenizer=tokenizer_path,
+            model=self.model_path,
+            tokenizer=self.tokenizer_path,
             trust_remote_code=True,
-            dtype=torch_dtype,
+            dtype=self.torch_dtype,
             swap_space=0,
-            tensor_parallel_size=tensor_parallel_size,
+            tensor_parallel_size=self.tensor_parallel_size,
             device=VLLM_DEFAULT_DEVICE,
+            distributed_executor_backend=self.distributed_executor_backend,
         )
         self.tokenizer = self.llm.get_tokenizer()
         tokenizer_config = self.model_config.get('tokenizer_config', {})
@@ -242,9 +261,18 @@ class VllmGeneratorRayActor(VllmGenerator, RayActorMixin):
     # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_engine.py  # noqa: E501
     def init_process_group(self, master_address, master_port, rank_offset,
                            world_size, group_name):
+
         if vllm_version >= '0.6.1':
-            return self.llm.llm_engine.model_executor.driver_worker.init_process_group(
-                    master_address, master_port, rank_offset, world_size, group_name)
+            if self.distributed_executor_backend is None:
+                return self.llm.llm_engine.model_executor.driver_worker.init_process_group(
+                    master_address, master_port, rank_offset, world_size, group_name
+                )
+            elif self.distributed_executor_backend == 'ray':
+                return self.llm.llm_engine.model_executor._run_workers(
+                    "init_process_group", master_address, master_port, rank_offset, world_size, group_name
+                )
+            else:
+                raise NotImplementedError
         elif '0.2.7' <= vllm_version <= '0.3.3':
             return self.llm.llm_engine._run_workers(
                 'init_process_group',
@@ -257,12 +285,24 @@ class VllmGeneratorRayActor(VllmGenerator, RayActorMixin):
         else:
             raise NotImplementedError
 
+    def stop_remote_worker_execution_loop(self):
+        # Fix error for using 2 communication group
+        # https://github.com/vllm-project/vllm/commit/eb6d3c264d0cd8e44dec16bca7947fbe96415ce9#diff-e1ad69e38e033accddfa5480ec808c4740eb39244d1ef51cc3407e20dde8cfd4
+        if vllm_version > "0.6.1":
+            self.llm.llm_engine.model_executor.stop_remote_worker_execution_loop()
+
     def update_weight(self, name, dtype, shape, empty_cache=False):
+        self.stop_remote_worker_execution_loop()
+
         if vllm_version >= '0.6.1':
-            return self.llm.llm_engine.model_executor.driver_worker.update_weight(name, dtype, shape, empty_cache)
+            if self.distributed_executor_backend is None:
+                return self.llm.llm_engine.model_executor.driver_worker.update_weight(name, dtype, shape, empty_cache)
+            elif self.distributed_executor_backend == 'ray':
+                return self.llm.llm_engine.model_executor._run_workers("update_weight", name, dtype, shape, empty_cache)
+            else:
+                raise NotImplementedError
         elif '0.2.7' <= vllm_version <= '0.3.3':
-            return self.llm.llm_engine._run_workers('update_weight', name, dtype,
-                                                    shape, empty_cache)
+            return self.llm.llm_engine._run_workers('update_weight', name, dtype, shape, empty_cache)
         else:
             raise NotImplementedError
 

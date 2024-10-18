@@ -17,10 +17,12 @@ class PolicyModelServer(BaseModelServer):
         # use trainer for self.generate() by default
         self.generator = self.trainer
         if 'generator_config' not in self.model_config:
+            logger.warning(f"[Generator] No generator config, `generator=trainer` by default.")
             return  # self.generator = self.trainer
 
         generator_config = self.model_config['generator_config']  # optional
         if generator_config.get('shared_with_trainer', True):
+            logger.info(f"[Generator] `shared_with_trainer=True`, generator=trainer.")
             return  # self.generator = self.trainer
 
         generator_config['model_path'] = self.model_config['model_path']
@@ -30,10 +32,10 @@ class PolicyModelServer(BaseModelServer):
         generator_type = generator_config.get('generator_type', None)
         self.generator_type = generator_type
         if generator_type == ENGINE_VLLM:
-            from ..model_backend.vllm_model_runner import \
-                VllmGeneratorRayActorGroup
+            from ..model_backend.vllm_model_runner import VllmGeneratorRayActorGroup
             self.generator = VllmGeneratorRayActorGroup(
                 f'{self.model_name}_generator', generator_config)
+            logger.info(f"[Generator] using VLLM generator.")
         else:
             raise ValueError(
                 f"No generator is registered with type '{generator_type}'")

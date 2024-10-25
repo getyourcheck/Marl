@@ -16,6 +16,8 @@ from .internlm.modeling_internlm2 import (
     InternLM2ForRewardModel,
     InternLM2ForCriticModel,
 )
+from .internlm3.configuration_internlm3 import InternLM3Config
+from .internlm3.modeling_internlm3 import InternLM3ForCausalLM
 
 
 def build_critic_model(
@@ -119,6 +121,13 @@ def build_language_model(model_path, extra_kwargs={}):
         config = InternLM2Config.from_pretrained(model_path)
         with no_init_weights():
             model = InternLM2ForCausalLM(config)
+        # load model weights
+        model = model.from_pretrained(model_path, **extra_kwargs)
+    elif model_type == "InternLM3":
+        logger.info(f"Loading InternLM3 model from {model_path}")
+        config = InternLM3Config.from_pretrained(model_path)
+        with no_init_weights():
+            model = InternLM3ForCausalLM(config)
         # load model weights
         model = model.from_pretrained(model_path, **extra_kwargs)
     elif model_type == "llama":

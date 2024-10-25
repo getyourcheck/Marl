@@ -42,6 +42,15 @@ class VllmGenerator:
     # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_engine.py  # noqa: E501
     def initialize(self, *args, **kwargs) -> None:
 
+        input_dict = dict(model=self.model_path,
+            tokenizer=self.tokenizer_path,
+            trust_remote_code=True,
+            dtype=self.torch_dtype,
+            swap_space=0,
+            tensor_parallel_size=self.tensor_parallel_size,
+            device=VLLM_DEFAULT_DEVICE,
+            )
+
         if '0.2.7' <= vllm_version <= '0.3.3' and self.tensor_parallel_size != 1:  # noqa: E501
             # NOTE: In 0.2.7, vLLM made a major change to its architecture which move one worker into the driver process.  # noqa: E501
             # Driver process will manually set CUDA_VISIBLE_DEVICES before worker init. To avoid importing torch before  # noqa: E501
@@ -74,23 +83,13 @@ class VllmGenerator:
                     super().__init__(*args, **kwargs)
 
             RayWorkerWrapperPath.RayWorkerWrapper = RayWorkerWrapper
-
-            # raise NotImplementedError
+            input_dict.update(distributed_executor_backend=self.distributed_executor_backend,)
         else:
             from vllm.worker import worker
             from .vllm_worker_wrap import VllmWorkerWrap
             worker.Worker = VllmWorkerWrap
 
-        self.llm: LLM = vllm.LLM(
-            model=self.model_path,
-            tokenizer=self.tokenizer_path,
-            trust_remote_code=True,
-            dtype=self.torch_dtype,
-            swap_space=0,
-            tensor_parallel_size=self.tensor_parallel_size,
-            device=VLLM_DEFAULT_DEVICE,
-            distributed_executor_backend=self.distributed_executor_backend,
-        )
+        self.llm: LLM = vllm.LLM(**input_dict)
         self.tokenizer = self.llm.get_tokenizer()
         tokenizer_config = self.model_config.get('tokenizer_config', {})
         for key, value in tokenizer_config.items():

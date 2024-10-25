@@ -6,6 +6,8 @@ from ..timer import Timer
 from .base import RepeaterBase
 from .utils import RunningStates
 
+from loguru import logger
+
 
 class KLGAERepeater(RepeaterBase):
 
@@ -75,8 +77,12 @@ class KLGAERepeater(RepeaterBase):
         advantages, returns = self.get_advantages_and_returns(
             old_values, kl_rewards, action_mask)
         if self.norm_adv:
-            advantages = (advantages - advantages.mean()) / (
+            tmp_advantages = (advantages - advantages.mean()) / (
                 advantages.std() + 1e-8)
+            logger.info(f"Before whiten: {advantages.shape} {action_mask.shape}, {advantages[0]}")
+            advantages = self._whiten(advantages, action_mask)
+            logger.info(f"After whiten: {advantages.shape} {action_mask.shape}, {advantages[0]}")
+            logger.warning(f"Original: {tmp_advantages.shape} {action_mask.shape}, {tmp_advantages[0]}")
         trajectories['advantages'] = advantages
         trajectories['returns'] = returns
         trajectories['old_values'] = old_values
@@ -117,7 +123,7 @@ class KLGAERepeater(RepeaterBase):
 
         if self.norm_rewards:
             self.running_states.update(clipped_rewards)
-            norm_reward_score = (clipped_rewards -
+            clipped_rewards = (clipped_rewards -
                                  self.running_states.mean) / (
                                      self.running_states.var.sqrt() + 1e-8)
         action_mask = trajectories.action_mask
@@ -139,7 +145,7 @@ class KLGAERepeater(RepeaterBase):
         last_reward = torch.zeros_like(kl).scatter_(
             dim=1,
             index=eos_indices,
-            src=norm_reward_score.unsqueeze(1).to(kl.dtype))
+            src=clipped_rewards.unsqueeze(1).to(kl.dtype))
 
         reward = last_reward + kl_reward
 
@@ -214,3 +220,13 @@ class KLGAERepeater(RepeaterBase):
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
         returns = advantages + values
         return advantages.detach(), returns
+
+    def _whiten(self, values, mask, shift_mean=False):
+        mean = torch.sum(values * mask) / (torch.sum(mask) + 1e-8)
+        var = torch.sum(((values - mean) ** 2) * mask) / (torch.sum(mask) + 1e-8)
+
+        whitened = (values - mean) * torch.rsqrt(var + 1e-8)
+        if not shift_mean:
+            whitened += mean
+
+        return whitened * mask

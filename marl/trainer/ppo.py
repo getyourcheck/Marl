@@ -180,20 +180,23 @@ class PPOTrainer:
         assert len(trajectories.output_ids) % self.critic_minibatch == 0
         critic_updates = len(trajectories.output_ids) // self.critic_minibatch
         critic_loss = []
-        assert critic_updates == 1 and self.policy_learn_time == 1, \
-            '[WIP] `critic_learn_async` support learn async in loop'
-        with Timer('critic_model.train_async'):
-            critic_batch_inputs, labels = self._critic_learn_prepare(
-                0, 0, trajectories, critic_updates)
-            v_loss_ref = self.critic_model.train_async(
-                input_ids=critic_batch_inputs['input_ids'],
-                labels=labels,
-                attention_mask=critic_batch_inputs['attention_mask'],
-                criterion=self.critic_criterion,
-                micro_batch_size=self.critic_micro_bs,
-            )
-        logger.info(f'[critic train] {self.critic_minibatch} batch')
-        critic_loss.append(v_loss_ref)
+        # assert critic_updates == 1 and self.policy_learn_time == 1, \
+        #     '[WIP] `critic_learn_async` support learn async in loop'
+
+        for learn_i in range(self.critic_learn_time):
+            for step_i in range(critic_updates):
+                with Timer('critic_model.train_async'):
+                    critic_batch_inputs, labels = self._critic_learn_prepare(
+                        step_i, learn_i, trajectories, critic_updates)
+                    v_loss_ref = self.critic_model.train_async(
+                        input_ids=critic_batch_inputs['input_ids'],
+                        labels=labels,
+                        attention_mask=critic_batch_inputs['attention_mask'],
+                        criterion=self.critic_criterion,
+                        micro_batch_size=self.critic_micro_bs,
+                    )
+                logger.info(f'[critic train] {self.critic_minibatch} batch')
+                critic_loss.append(v_loss_ref)
         return critic_loss
 
     def critic_learn_get(self, critic_loss_ref):

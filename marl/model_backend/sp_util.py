@@ -34,9 +34,11 @@ def remove_paddings(batch, labels):
     right_zeros = count_consecutive_zeros(batch['input_ids'],left=False)
     if right_zeros != 0:
         for key in batch.keys():
-            batch[key]= batch[key][:,:-right_zeros]
+            if batch[key].dim() >= 2:
+                batch[key]= batch[key][:,:-right_zeros]
         for key in labels.keys():
-            labels[key] = labels[key][:,:-right_zeros]
+            if labels[key].dim() >= 2:
+                labels[key] = labels[key][:,:-right_zeros]
 
     return batch, labels
 
@@ -75,7 +77,7 @@ def split_for_sp(batch, labels, padding_value_dict={'tensor_label': -100, 'defau
     for key in batch.keys():
         if key == 'attention_mask':
             continue
-        if batch[key] is not None:
+        if batch[key] is not None or batch[key].dim() >= 2:
             batch[key] = split_for_sequence_parallel(batch[key], dim=1, sp_group=sp_group)
     if isinstance(labels, torch.Tensor):
         labels = split_for_sequence_parallel(labels, dim=1, sp_group=sp_group)

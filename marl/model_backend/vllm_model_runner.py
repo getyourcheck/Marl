@@ -202,6 +202,8 @@ class VllmGenerator:
             output_token_ids = [
                 item for item in req_output.outputs[0].token_ids
             ]
+            finish_reasons = [req_output.outputs[0].finish_reason]
+            output['finish_reasons'] = finish_reasons
             output_ids = input_ids + output_token_ids  # concat
             output['input_ids'] = torch.Tensor(input_ids).to(
                 torch.long).unsqueeze(0)

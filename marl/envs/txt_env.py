@@ -25,6 +25,7 @@ class TxtEnv(EnvBase):
         async_reward: bool = True,
         generate_kwargs: dict = None,
         resume_step=-1,
+        repeat_prompt=1,
         **_ignored,
     ):
         self.policy_model = policy_model
@@ -39,6 +40,7 @@ class TxtEnv(EnvBase):
         self.async_reward = async_reward
         self.generate_kwargs: dict = generate_kwargs
         self.resume_step = resume_step
+        self.repeat_prompt = repeat_prompt
 
     def rollout(self, display=True):
         while self.resume_step > 0:
@@ -48,6 +50,15 @@ class TxtEnv(EnvBase):
                 next(self.pretrain_mes_iter)
             self.resume_step -= 1
         prompt_datas = deepcopy(next(self.prompt_mes_iter))
+        if self.repeat_prompt > 1:
+            repeat_prompt_datas = []
+            for prompt_data in prompt_datas:
+                for _ in range(self.repeat_prompt):
+                    repeat_prompt_datas.append(deepcopy(prompt_data))
+            logger.info(f'[TXT_ENV For Generate]: repeat prompt {self.repeat_prompt} times,'
+                        f' current prompt num: {len(repeat_prompt_datas)}')
+            prompt_datas = repeat_prompt_datas
+
         prompt_input_messages = []
         for data in prompt_datas:
             assert data['mes_type'] == 'prompt'

@@ -15,23 +15,30 @@ class PretrainLoss(torch.nn.Module):
         if label_smoothing is not None and label_smoothing != 0:
             logger.warning(f'Use label_smoothing: {label_smoothing}')
         self.label_smoothing = label_smoothing
-        # TODO, per_token loss
-        self.loss_type = "per_seq" # loss_type
-
-        # the output will gather output is set in the model,
-        # so use ordinary loss
-        self.loss_fn = torch.nn.CrossEntropyLoss(
-            reduction='mean', label_smoothing=label_smoothing)
+        self.loss_type = loss_type
+        assert self.loss_type in ["per_token", "per_seq"]
 
     def forward(self, logits: torch.Tensor, labels: torch.Tensor, loss_factor=None):
-        # TODO, per_token loss
         shift_logits = logits.contiguous().view(-1, logits.size(-1))
         shift_labels = labels.contiguous().view(-1)
-        loss = self.loss_fn(shift_logits, shift_labels)
-        # There is no need to consider the ignore_index problem here,
-        # because the loss calculation will be calculated through the calculation range,  # noqa: E501
-        # and -100 must be outside this range,
-        # so there is no problem
+        
+        if self.loss_type == "per_seq":
+            # the output will gather output is set in the model,
+            # so use ordinary loss
+            self.loss_fn = torch.nn.CrossEntropyLoss(
+                reduction='mean', ignore_index=-100, label_smoothing=self.label_smoothing)
+            loss = self.loss_fn(shift_logits, shift_labels)
+            # There is no need to consider the ignore_index problem here,
+            # because the loss calculation will be calculated through the calculation range,  # noqa: E501
+            # and -100 must be outside this range,
+            # so there is no problem
+        elif self.loss_type == "per_token":
+            assert loss_factor is not None
+            logger.info(f"[loss_factor] pretrain: {loss_factor}")
+            # pg_loss = torch.sum(torch.max(pg_loss1, pg_loss2) * mask) * loss_factor
+            self.loss_fn = torch.nn.CrossEntropyLoss(
+                reduction='sum', ignore_index=-100, label_smoothing=self.label_smoothing)
+            loss = self.loss_fn(shift_logits, shift_labels) * loss_factor
 
         return loss
 
@@ -54,6 +61,7 @@ class PPOPolicyLoss(torch.nn.Module):
             pg_loss = (torch.max(pg_loss1, pg_loss2) * mask).sum() / (mask.sum() + 1e-8)
         elif self.loss_type == "per_token":
             assert loss_factor is not None
+            logger.info(f"[loss_factor] ppo: {loss_factor}")
             pg_loss = torch.sum(torch.max(pg_loss1, pg_loss2) * mask) * loss_factor
         return pg_loss
 

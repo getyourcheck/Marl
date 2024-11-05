@@ -1,6 +1,7 @@
 from typing import Any
 
 import torch
+from loguru import logger
 
 
 class CriticLoss(torch.nn.Module):
@@ -21,6 +22,7 @@ class CriticLoss(torch.nn.Module):
             vf_loss = (torch.max(vf_loss1, vf_loss2) * mask).sum() / mask.sum()
         elif self.loss_type == "per_token":
             assert loss_factor is not None
+            logger.info(f"[loss_factor] value: {loss_factor}")
             vf_loss = torch.sum(torch.max(vf_loss1, vf_loss2) * mask * loss_factor)
         return 0.5 * vf_loss
 

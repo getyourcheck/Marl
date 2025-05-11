@@ -15,6 +15,10 @@ from marl.timer import Timer
 from marl.trainer import PPOTrainer
 
 
+import os
+logger.info(f'pid: {os.getpid()}')
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train LLM')
     parser.add_argument(
@@ -22,7 +26,7 @@ def parse_args():
         '--config',
         help='config file name or path.',
         type=str,
-        default='projects/internlm2/1B/ppo_ds_vllm_8gpu.py')
+        default='projects/internlm2/1B/1B_ppo_ds_vllm_8gpu.py')
     parser.add_argument(
         '-w',
         '--work_dir',
@@ -64,13 +68,14 @@ if __name__ == '__main__':
     logger_train = logger.bind(name='train')
 
     config = Config.from_file(args.config)
-    logger.info('#################### CONFIG BGN ####################')
+
     for k, v in config.items():
         logger.info(f'{k}: {v}')
-    logger.info('#################### CONFIG END ####################')
+    
 
     # init model
-    cluster_address = args.address
+    logger.info('************* init model! ************')
+    cluster_address = args.address # default:auto
     if cluster_address != 'auto':
         cluster_address = f'ray://{cluster_address}:10001'
     logger.info(f'cluster_address={cluster_address}')
@@ -82,6 +87,7 @@ if __name__ == '__main__':
     critic_model = model_dict['critic']
 
     # init prompt & pretrain dataset
+    logger.info('************* init prompt & pretrain dataset! ************')
     prompt_dataset_config = config['prompt_dataset_config']
     prompt_mes_iter = MessageIter(
         tokenizer=ref_model.tokenizer, **prompt_dataset_config)
@@ -92,6 +98,7 @@ if __name__ == '__main__':
     pretrain_data_iter = get_pretrain_data(**pretrain_dataset_config)
 
     # init txt env
+    logger.info('************* init txt env! ************')
     rollout_config = config.get('rollout_config', {})
     txt_env = TxtEnv(
         policy_model=policy_model,
@@ -101,6 +108,7 @@ if __name__ == '__main__':
         **rollout_config,
     )
     # init repeater
+    logger.info('************* init repeater! ************')
     repeater_config = config.get('repeater_config', {})
     ppo_repeater = KLGAERepeater(
         ref_model=ref_model,
@@ -110,6 +118,7 @@ if __name__ == '__main__':
         **repeater_config,
     )
     # init trainer
+    logger.info('************* init trainer! ************')
     train_config = config.get('train_config', {})
     ppo = PPOTrainer(
         policy_model=policy_model, critic_model=critic_model, **train_config)
@@ -124,6 +133,7 @@ if __name__ == '__main__':
 
     step = max(0, resume_step)
     while step <= max_train_step:
+        print(f'-------step {step}: end_to_end-------')
         s_t = time.time()
         with Timer(f'step {step}: end_to_end'):
             # generate trajectories

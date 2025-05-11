@@ -33,6 +33,7 @@ if __name__ == "__main__":
     if not args.address.endswith(":10001"):
         args.address = f"{args.address}:10001"  # 10.140.0.160 -> 10.140.0.160:10001
     context = ray.init(address=f"ray://{args.address}")
+    # context = ray.init(address="10.254.29.45:7777")
 
     nodes = ray.get(_available_resources_per_node.remote())
     assert nodes

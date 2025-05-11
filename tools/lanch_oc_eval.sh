@@ -6,11 +6,14 @@
 
 # Usage
 # bash lanch_oc_eval.sh 
-HELP_MESSAGE="Usage: bash $0 [--help] [-w|--work_dir work_dir] [--user user] [-q|--queue_name queue_name] [--max_eval_step max_eval_step]"
+HELP_MESSAGE="Usage: bash $0 [--help] [-w|--work_dir work_dir] [--user user] [-q|--queue_name queue_name] [--max_eval_step max_eval_step] [--num_gpus num_gpus] [--model_path model_path] [--model_abbr model_abbr]"
 # work_dir="/fs-computility/llm/lishuaibin/0813/marl_gen_original_amask/trainlog_2024-08-14-03:24:16"
 # user="lishuaibin"
 max_eval_step=400
 queue_name="llmit"
+num_gpus=8  # 默认使用8张GPU
+model_path=""  # 模型路径
+model_abbr="1.8B_model"  # 模型简称
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -28,6 +31,15 @@ while [[ $# -gt 0 ]]; do
             ;;
         --max_eval_step)
             max_eval_step=$2; shift; shift
+            ;;
+        --num_gpus)
+            num_gpus=$2; shift; shift
+            ;;
+        --model_path)
+            model_path=$2; shift; shift
+            ;;
+        --model_abbr)
+            model_abbr=$2; shift; shift
             ;;
         *)
             echo "Unsupported positional argument: $1"; exit 1
@@ -82,7 +94,7 @@ sed -i "/.*home_path = ''*/c\home_path = '$HOME'" $obj_config_path
 if [ "$queue_name" = "llmit" ];then
     # llmit
     ResourceQueueID="q-20240425172512-t6mxc"
-elif [ "$queue_name" = "llmit" ];then
+elif [ "$queue_name" = "hsllm_dd1" ];then
     # hsllm_dd1
     ResourceQueueID="q-20240812151300-zwjbr"
 fi
@@ -93,6 +105,23 @@ sed -i "/.*volcano_config_path = ''*/c\volcano_config_path = '${volcano_config_p
 sed -i "s/queue_name = ''/queue_name = '${queue_name}'/" $sub_config_path
 sed -i "s/queue_name = ''/queue_name = '${queue_name}'/" $obj_config_path
 
+# 如果提供了特定模型路径，则直接评测该模型
+if [ ! -z "$model_path" ]; then
+    echo "直接评测指定模型: $model_path"
+    
+    # 添加待测模型到config
+    tmp_model_cfg="('$model_abbr', '$model_path', $num_gpus),"
+    sed -i "53a ${tmp_model_cfg}" $sub_config_path
+    sed -i "160a ${tmp_model_cfg}" $obj_config_path
+
+    # 提交评测
+    nohup opencompass $obj_config_path -r latest -w ${oc_out_dir}/results > ${oc_out_dir}/objective.log 2>&1 &
+    nohup opencompass $sub_config_path -r latest -w ${oc_out_dir}/results > ${oc_out_dir}/subjective.log 2>&1 &
+    
+    echo "评测已启动，使用 $num_gpus 张GPU评测模型 $model_path"
+    echo "评测结果将保存在: ${oc_out_dir}/results"
+    exit 0
+fi
 
 # get current models
 ckpt_dirs="${work_dir}/ckpt/policy_model"
@@ -123,7 +152,8 @@ do
 
                 tmp_path=$ckpt_dirs/$file2
                 tmp_abbr="ppo_$file2"
-                tmp_num_gpus=1
+                # 使用指定的GPU数量
+                tmp_num_gpus=$num_gpus
                 # 添加待测模型到config
                 tmp_model_cfg="('$tmp_abbr', '$tmp_path/', $tmp_num_gpus),"
                 sed -i "53a ${tmp_model_cfg}" $sub_config_path

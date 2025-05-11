@@ -26,15 +26,17 @@ def build_critic_model(
     model_type = "unknown"
     if os.path.exists(os.path.join(model_path, "config.json")):
         with open(os.path.join(model_path, "config.json"), "r") as f:
-            config = json.load(f)
-            model_type = config.get("model_type", "unknown")
+            config_dict = json.load(f)
+            model_type = config_dict.get("model_type", "unknown")
+    
     if model_type == "internlm2":
         logger.info(f"[Critic model] Loading InternLM2 model from {model_path}")
         logger.warning(
             "[Critic model] Using InternLM2ForRewardModel as critic model, the setting of `head_name` and `two_linear` will be ignored."
         )
-        config = InternLM2RewardConfig.from_pretrained(model_path)
+        config = InternLM2Config.from_pretrained(model_path)
         config.update(extra_kwargs)
+        config.attn_implementation = "eager"
         with no_init_weights():
             model = InternLM2ForCriticModel(config)
         # check head_name and two_linear

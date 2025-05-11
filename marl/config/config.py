@@ -80,7 +80,7 @@ class Config(dict):
         # import the config as module
         remove_path = False
         if filepath.parent not in sys.path:
-            sys.path.insert(0, (filepath))
+            sys.path.insert(0, str(filepath.parent))
             remove_path = True
 
         module_name = filepath.stem

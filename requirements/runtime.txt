@@ -1,7 +1,7 @@
 ray[default,train]==2.9.1
 torch==2.1.0+cu118
 torchaudio==2.1.0+cu118
-torchvision==0.16.0+cu118
+torchvision==0.16.0+cu18
 transformers==4.40.1
 triton==2.1.0
 wandb==0.16.3

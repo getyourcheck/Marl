@@ -24,6 +24,7 @@ vllm_version = vllm.__version__
 
 
 class VllmGenerator:
+    """基于vLLM的生成器基类,实现模型加载和文本生成的核心功能"""
 
     def __init__(self, model_config) -> None:
         self.model_config: dict = model_config
@@ -89,15 +90,23 @@ class VllmGenerator:
             from .vllm_worker_wrap import VllmWorkerWrap
             worker.Worker = VllmWorkerWrap
 
-        self.llm: LLM = vllm.LLM(**input_dict)
-        self.tokenizer = self.llm.get_tokenizer()
-        tokenizer_config = self.model_config.get('tokenizer_config', {})
-        for key, value in tokenizer_config.items():
+        self.llm: LLM = vllm.LLM(**input_dict) # 创建vLLM实例
+        self.tokenizer = self.llm.get_tokenizer() # 获取tokenizer实例
+        tokenizer_config = self.model_config.get('tokenizer_config', {}) # 获取tokenizer配置
+        for key, value in tokenizer_config.items(): # 更新tokenizer配置
             setattr(self.tokenizer, key, value)
         self.tokenizer.add_special_tokens({'pad_token' : self.tokenizer.pad_token})
 
     @staticmethod
     def get_sampling_params_from_dict(generate_kwargs: dict) -> SamplingParams:
+        """从HuggingFace的生成参数字典中构建vLLM的采样参数
+        
+        Args:
+            generate_kwargs (dict): 生成参数字典，包含各种采样和生成控制参数
+            
+        Returns:
+            SamplingParams: vLLM的采样参数对象
+        """
         sp_kwargs = {}
         tmp_sp = SamplingParams()
         for k, v in generate_kwargs.items():
@@ -133,7 +142,7 @@ class VllmGenerator:
 
     def generate(
         self,
-        inputs: Union[torch.Tensor, str, list[str]],
+        inputs: Union[torch.Tensor, str, list[str]], # 输入可以是tensor、字符串或字符串列表
         max_inputs_length: int,
         step=-1,
         output_str=True,
@@ -144,7 +153,11 @@ class VllmGenerator:
         generate_kwargs: Optional[dict] = {},
         **_ignored,
     ) -> list[tuple[list[int], str]]:
-        sp = VllmGenerator.get_sampling_params_from_dict(generate_kwargs)
+        """使用vLLM生成文本
+        
+        根据输入生成文本，支持多种输入格式和生成参数设置
+        """
+        sp = VllmGenerator.get_sampling_params_from_dict(generate_kwargs) # 从字典中构建vLLM的采样参数
         sp.max_tokens = step if step > 0 else None
         if output_logprobs:
             sp.logprobs = max(0, sp.logprobs or 0)
@@ -152,7 +165,7 @@ class VllmGenerator:
             f'[{self.__class__.__name__}] self.generate() SamplingParams: {sp}'
         )
 
-        if isinstance(inputs, torch.Tensor):
+        if isinstance(inputs, torch.Tensor): # 将tensor解码为文本
             if len(inputs.shape) == 2:  # e.g., [batch_size, seq_len]
                 prompt = self.tokenizer.batch_decode(
                     inputs,
@@ -180,11 +193,15 @@ class VllmGenerator:
         else:
             raise ValueError(f'Unsupported inputs with type({type(inputs)})')
 
-        # Calling vllm's generate
+        # Calling vllm's generate 调用vLLM的生成方法
         req_outputs = self.llm.generate(
-            prompt_token_ids=prompt, sampling_params=sp)
+            prompt_token_ids=prompt, sampling_params=sp) # 使用提供的prompt和采样参数生成文本
 
         def pad_list_with_pad_token(int_list, max_length, pad_token_id):
+            """填充列表到指定最大长度
+            
+            将列表填充到指定最大长度,使用pad_token_id的填充token
+            """
             if len(int_list) < max_length:
                 num_pad_token_to_add = max_length - len(int_list)
                 padded_list = [pad_token_id] * num_pad_token_to_add + int_list
@@ -192,23 +209,26 @@ class VllmGenerator:
             else:
                 return int_list
 
-        policy_outputs = []
+        policy_outputs = [] # 存储PolicyOutput对象列表
         for _, req_output in enumerate(req_outputs):
-            output = PolicyOutput()
-            input_ids = [item for item in req_output.prompt_token_ids]
+            output = PolicyOutput() # 创建PolicyOutput对象
+            input_ids = [item for item in req_output.prompt_token_ids] # 获取输入的token ID并进行填充
             input_ids = pad_list_with_pad_token(input_ids, max_inputs_length,
                                                 self.tokenizer.pad_token_id)
+            # 获取生成的token ID
             output_token_ids = [
                 item for item in req_output.outputs[0].token_ids
             ]
             finish_reasons = [req_output.outputs[0].finish_reason]
             output['finish_reasons'] = finish_reasons
-            output_ids = input_ids + output_token_ids  # concat
+            output_ids = input_ids + output_token_ids  # concat input_ids and output_token_ids
+            # 转换为tensor并添加batch维度
             output['input_ids'] = torch.Tensor(input_ids).to(
                 torch.long).unsqueeze(0)
             output['output_ids'] = torch.tensor(output_ids).to(
                 torch.long).unsqueeze(0)
 
+            # 生成掩码
             if self.tokenizer.pad_token_id != generate_kwargs.get('pad_token_id', self.tokenizer.pad_token_id):
                 logger.warning(f"tokenizer.pad_token_id != generate_kwargs['pad_token_id'], using tokenizer.pad_token_id to pad")
             output['question_mask'], output[
@@ -239,7 +259,7 @@ class VllmGenerator:
                         logprob = value
                     logprobs.append(logprob)
                 output['logprobs'] = torch.tensor(logprobs).unsqueeze(0)
-            if output_str:  # return list[str]
+            if output_str:  # return list[str]  解码生成的文本
                 output['output_ans_str'] = [req_output.outputs[0].text]
                 output_str = self.tokenizer.decode(
                     output_ids,
@@ -251,6 +271,7 @@ class VllmGenerator:
 
             policy_outputs.append(output)
 
+        # 合并所有输出
         padding_token_map = {'output_ids': self.tokenizer.pad_token_id}
         concated_policy_out = concat_policy_outputs(policy_outputs,
                                                     padding_token_map)
@@ -262,7 +283,17 @@ class VllmGeneratorRayActor(VllmGenerator, RayActorMixin):
     # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_engine.py  # noqa: E501
     def init_process_group(self, master_address, master_port, rank_offset,
                            world_size, group_name):
+        """初始化分布式进程组
+        
+        为分布式训练设置进程组,处理不同vLLM版本的兼容性
 
+        Args:
+            master_address: 主节点地址
+            master_port: 主节点端口
+            rank_offset: 进程排名偏移量
+            world_size: 总进程数
+            group_name: 进程组名称
+        """
         if vllm_version >= '0.6.1':
             if self.distributed_executor_backend is None:
                 return self.llm.llm_engine.model_executor.driver_worker.init_process_group(
@@ -309,6 +340,11 @@ class VllmGeneratorRayActor(VllmGenerator, RayActorMixin):
 
 
 class VllmGeneratorRayActorGroup(RayActorGroup):
+    """
+    管理多个VllmGeneratorRayActor实例的群组
+    
+    在数据并行设置下,管理多个vLLM生成器实例,分配生成任务并合并结果
+    """
 
     def __init__(self, name: str, config: dict):
         import uuid
@@ -319,11 +355,11 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
         self.ray_actors: list[VllmGeneratorRayActor] = []  # i.e., vllm_engines
 
         # Adapted from https://github.com/OpenLLMAI/OpenRLHF/blob/v0.2.5/openrlhf/trainer/ray/vllm_engine.py  # noqa: E501
-        for dp_i in range(self.dp_size):
+        for dp_i in range(self.dp_size): # 为每个数据并行实例创建Ray Actor
             ray_actor_num_gpus = int(self.tp_size == 1)
             scheduling_strategy = None
 
-            if self.tp_size > 1:
+            if self.tp_size > 1: # 如果使用张量并行，创建资源组
                 bundles = [{
                     'CPU': DEFAULT_NUM_CPUS,
                     'GPU': DEFAULT_NUM_GPUS
@@ -338,6 +374,7 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
                 )
 
             namespace = f'{uuid.uuid4()}_{VllmGeneratorRayActor.__class__.__name__}'  # noqa: E501
+            # 创建并添加Ray Actor
             self.ray_actors.append(
                 ray.remote(VllmGeneratorRayActor).options(
                     name=f'{name}_rank_{dp_i}',
@@ -367,6 +404,18 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
 
     # Generation
     def generate_async(self, input_ids, attention_mask, *args, **kwargs):
+        """异步生成文本
+        
+        将输入分成多个微批次,分配给不同的Ray Actor异步执行生成任务
+        
+        Args:
+            input_ids: 输入token ID
+            attention_mask: 注意力掩码
+            *args, **kwargs: 传递给generate方法的其他参数
+            
+        Returns:
+            Ray对象引用列表,每个引用对应一个异步生成任务
+        """
         assert (
             len(input_ids) >= self.dp_size
         ), f'The length of input_ids({len(input_ids)}) must not be less than dp_size({self.dp_size}).'  # noqa: E501
@@ -378,6 +427,7 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
                                                       attention_mask)
         assert len(micro_batches
                    ) == self.dp_size, f'{len(micro_batches)}, :{self.dp_size}'
+        # 为每个微批次创建异步生成任务
         return [
             self.ray_actors[index].generate.remote(
                 inputs=micro_batch['input_ids'],
@@ -389,6 +439,15 @@ class VllmGeneratorRayActorGroup(RayActorGroup):
         ]
 
     def generate_get(self, object_refs, timeout=None):
+        """获取异步生成任务的结果
+        
+        Args:
+            object_refs: Ray对象引用列表
+            timeout: 超时时间,None表示无限等待
+            
+        Returns:
+            等待所有异步任务完成,返回合并后的PolicyOutput对象
+        """
         outputs = ray.get(object_refs, timeout=timeout)
         padding_token_map = {
             'output_ids': self.config.tokenizer_config['pad_token_id']

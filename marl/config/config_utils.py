@@ -34,7 +34,9 @@ def get_resource_requirement(model_configs: dict) -> dict:
 
         resources['num_gpus'] += num_gpus
 
-    resources['num_cpus'] = resources['num_gpus'] * 10
+    resources['num_gpus'] = 8
+    resources['num_cpus'] = 96
+    # resources['num_cpus'] = resources['num_gpus'] * 10
     return resources
 
 
